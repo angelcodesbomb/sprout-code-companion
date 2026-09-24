@@ -5,17 +5,9 @@
  * This is intentionally kept as a simple lookup so it can be swapped out
  * for a real LLM call later without touching any component code.
  *
- * ─── SWAP POINT FOR LLM ──────────────────────────────────────────────────────
- * To replace this with a real AI explanation, change the export at the bottom
- * so `guessDescription` becomes an async function that calls your LLM.
- * The call signature stays the same: (node: { name, path, type, children? })
- * → returns a string description.
- *
- * Example future signature:
- *   export async function guessDescription(node, repoContext) {
- *     return await callLLM(`Explain what ${node.path} does in this repo.`);
- *   }
- * ─────────────────────────────────────────────────────────────────────────────
+ * Rule-based descriptions used as fallback tier in the shared repo map
+ * (see src/lib/repoMap.js and /api/filemap/summarize). AI summaries are
+ * requested lazily on hover — do not call an LLM from this module.
  */
 
 import { countFiles } from "./parseGithubTree.js";
@@ -298,14 +290,8 @@ const EXTENSION_MAP = {
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
- * Returns a plain-English description for a file or folder node.
- *
- * ── LLM SWAP POINT ───────────────────────────────────────────────────────────
- * This is the single function to replace when wiring in a real AI explanation.
- * Signature: (node: { name: string, path: string, type: "file"|"folder", children?: Node[] }) → string
- * Future async version would be:
- *   export async function guessDescription(node) { return await yourLLMCall(node); }
- * ─────────────────────────────────────────────────────────────────────────────
+ * Returns a plain-English fallback description for a file or folder node.
+ * Used when building the repo map and when Grok is unavailable.
  *
  * @param {{ name: string, path: string, type: "file"|"folder", children?: any[] }} node
  * @returns {string}
