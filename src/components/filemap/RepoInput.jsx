@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, AlertCircle } from "lucide-react";
+import { ArrowRight, AlertCircle, History, Github } from "lucide-react";
+import { useRecentRepos } from "@/hooks/useRecentRepos";
 
 /**
  * Parses a GitHub URL into { owner, repo } or returns null if invalid.
@@ -57,6 +58,7 @@ const ERROR_MESSAGES = {
 export function RepoInput({ onLoad, onLoadStart, isLoading }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState(null); // null | keyof ERROR_MESSAGES
+  const { recents, addRecent } = useRecentRepos();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -114,14 +116,17 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
 
       // GitHub returns { tree: [...], truncated: bool }.
       // When truncated is true the repo is very large and the tree is partial.
-      onLoad(treeData.tree ?? [], {
+      const meta = {
         owner: parsed.owner,
         repo: parsed.repo,
         branch: defaultBranch,
         fullName: repoData.full_name,
         description: repoData.description,
         truncated: treeData.truncated ?? false,
-      });
+      };
+
+      onLoad(treeData.tree ?? [], meta);
+      addRecent(meta);
     } catch {
       setError("unknown");
     }
@@ -129,6 +134,39 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
 
   return (
     <div>
+      {recents.length > 0 && !value && (
+        <motion.div
+          className="repo-recent-wrap"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <div className="repo-recent-head">
+            <History size={13} style={{ color: "var(--muted-foreground)" }} />
+            <span className="mono-label" style={{ margin: 0 }}>JUMP BACK IN</span>
+          </div>
+          <div className="repo-recent-grid">
+            {recents.map((r) => (
+              <button
+                key={r.fullName}
+                type="button"
+                className="repo-recent-card"
+                onClick={() => {
+                  setValue(r.url);
+                  setTimeout(() => {
+                    document.getElementById("repo-submit-btn")?.click();
+                  }, 50);
+                }}
+              >
+                <Github size={16} className="repo-recent-card__icon" />
+                <div className="repo-recent-card__text">
+                  <span className="rr-owner">{r.owner}/</span>
+                  <strong className="rr-repo">{r.repo}</strong>
+                </div>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+      )}
       <form className="repo-input-bar" onSubmit={handleSubmit} role="search" aria-label="Load GitHub repository">
         <input
           className="repo-input-bar__field"
@@ -152,6 +190,7 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
           transition={{ type: "spring", stiffness: 420, damping: 22 }}
         >
           <button
+            id="repo-submit-btn"
             type="submit"
             disabled={isLoading || !value.trim()}
             aria-busy={isLoading}
