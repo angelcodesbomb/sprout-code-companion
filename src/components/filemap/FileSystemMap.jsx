@@ -2,9 +2,10 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { FileCode2, Folder, FolderOpen, X, GitBranch } from "lucide-react";
-import { useState } from "react";
-import { guessDescription } from "@/lib/fileTypeGuess";
+import { useEffect, useState } from "react";
 import { countFiles } from "@/lib/parseGithubTree";
+import { DOMAIN_TONE } from "@/lib/repoMap";
+import { useRepoMapContext } from "@/context/RepoMapContext";
 
 // ── Skeleton (loading state) ──────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function EmptyCanvas() {
 
 // ── Recursive tree list ───────────────────────────────────────────────────────
 
-function TreeNode({ node, depth = 0, onSelect, activeNode }) {
+function TreeNode({ node, depth = 0, onSelect, activeNode, onHoverExplain }) {
   const [open, setOpen] = useState(depth < 2); // auto-expand top two levels
 
   const isFolder = node.type === "folder";
@@ -80,17 +81,23 @@ function TreeNode({ node, depth = 0, onSelect, activeNode }) {
     onSelect(node);
   }
 
+  function handleMouseEnter() {
+    onHoverExplain?.(node);
+  }
+
   return (
     <li className="file-tree__item">
       <button
         type="button"
         className={`file-tree__row${isActive ? " file-tree__row--active" : ""}`}
         onClick={handleClick}
+        onMouseEnter={handleMouseEnter}
         aria-expanded={isFolder ? open : undefined}
         title={node.path}
       >
         <Icon size={13} className={iconClass} aria-hidden="true" />
         <span className="file-tree__name">{node.name}</span>
+        <DomainPill path={node.path} />
         {isFolder && fileCount !== null && (
           <span className="file-tree__count">{fileCount}</span>
         )}
@@ -105,11 +112,30 @@ function TreeNode({ node, depth = 0, onSelect, activeNode }) {
               depth={depth + 1}
               onSelect={onSelect}
               activeNode={activeNode}
+              onHoverExplain={onHoverExplain}
             />
           ))}
         </ul>
       )}
     </li>
+  );
+}
+
+// ── Domain pill on tree rows ──────────────────────────────────────────────────
+
+function DomainPill({ path }) {
+  const { getDomainForPath } = useRepoMapContext();
+  const domain = getDomainForPath(path);
+  if (!domain) return null;
+  const tone = DOMAIN_TONE[domain] ?? "coral";
+  return (
+    <span
+      className={`file-tree__domain file-tree__domain--${tone}`}
+      title={domain}
+      aria-label={`${domain} agent domain`}
+    >
+      {domain.slice(0, 3)}
+    </span>
   );
 }
 
@@ -128,6 +154,17 @@ function TreeNode({ node, depth = 0, onSelect, activeNode }) {
  */
 export function FileSystemMap({ nodes, title, subtitle, repoMeta, isLoading }) {
   const [activeNode, setActiveNode] = useState(null);
+  const { requestSummary, requestNodeDetail, getDescriptionForPath } = useRepoMapContext();
+
+  useEffect(() => {
+    if (!activeNode) return;
+    requestSummary(activeNode.path ?? "");
+    requestNodeDetail(activeNode.path ?? "");
+  }, [activeNode, requestSummary, requestNodeDetail]);
+
+  function handleHoverExplain(node) {
+    requestSummary(node.path ?? "");
+  }
 
   // ── Loading state ───────────────────────────────────────────────────────────
   if (isLoading) {
@@ -226,19 +263,9 @@ export function FileSystemMap({ nodes, title, subtitle, repoMeta, isLoading }) {
                 </button>
                 <span className="mono-label">IN PLAIN ENGLISH</span>
                 <strong>{activeNode.name}</strong>
-                {/*
-                 * ── LLM SWAP POINT ──────────────────────────────────────────
-                 * Replace guessDescription(activeNode) below with your async
-                 * LLM call. guessDescription() is imported from
-                 * lib/fileTypeGuess.js — change only that function to wire
-                 * in a real AI explanation without touching this component.
-                 *
-                 * When going async, add a loading state here:
-                 *   const [desc, setDesc] = useState("");
-                 *   useEffect(() => { yourLLM(activeNode).then(setDesc); }, [activeNode]);
-                 * ─────────────────────────────────────────────────────────────
-                 */}
-                <p>{guessDescription(activeNode)}</p>
+                <p className="file-tree-popover__desc">
+                  {getDescriptionForPath(activeNode.path ?? "")}
+                </p>
                 <p className="file-tree-popover__path">{activeNode.path}</p>
               </motion.div>
             )}
@@ -253,6 +280,7 @@ export function FileSystemMap({ nodes, title, subtitle, repoMeta, isLoading }) {
                 depth={0}
                 onSelect={setActiveNode}
                 activeNode={activeNode}
+                onHoverExplain={handleHoverExplain}
               />
             ))}
           </ul>
