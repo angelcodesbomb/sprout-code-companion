@@ -3107,3 +3107,10 @@ button {
   border-radius: 20px;
   font: 700 9px var(--font-mono);
 }
+
+/* ── Agent sidebar divider between Explore Code and Agents sections ──────── */
+.agent-sidebar__divider {
+  width: calc(100% - 16px);
+  margin: 10px 8px;
+  border-top: 1.5px dashed var(--border);
+}
