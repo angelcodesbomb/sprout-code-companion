@@ -1,11 +1,13 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Code2, GitBranch, Search, Settings } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { SproutMark } from "../shared/SproutMark";
 import { ThemeToggle } from "../shared/ThemeToggle";
 import { AgentSidebar } from "../agents/AgentSidebar";
 import { FileMapGraph } from "../filemap/FileMapGraph";
 import { RepoInput } from "../filemap/RepoInput";
+import { RepoMapCopyBar } from "../filemap/RepoMapCopyBar";
+import { RepoMapAskBar } from "../filemap/RepoMapAskBar";
 // FileSystemMap kept as unused fallback for very large repos or D3 rendering issues
 // import { FileSystemMap } from "../filemap/FileSystemMap";
 import { CodeExplainer } from "../editor/CodeExplainer";
@@ -34,8 +36,20 @@ export function DashboardShell({
   onThemeToggle,
   onRepoLoad,
   onLoadStart,
-}) {  const [view, setView] = useState("map");
+}) {
+  const [view, setView] = useState("map");
   const [activeAgent, setActiveAgent] = useState("Review");
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "/" && e.target.tagName !== "INPUT" && e.target.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        document.getElementById("repo-map-ask-input")?.focus();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <main className="dashboard-shell">
@@ -125,7 +139,7 @@ export function DashboardShell({
                       </h2>
                       <p style={{ margin: "7px 0 0", color: "var(--muted-foreground)", fontSize: 13 }}>
                         {repoMeta
-                          ? "Click any node to explore. Drag or scroll to pan and zoom."
+                          ? "Hover for a quick line. Click for pointers. Double-click a folder to focus it."
                           : "Enter any public GitHub URL above."}
                       </p>
                     </div>
@@ -154,12 +168,17 @@ export function DashboardShell({
                     )}
                   </div>
 
+                  {repoMeta && <RepoMapCopyBar />}
+
                   <FileMapGraph
                     nodes={files}
                     repoMeta={repoMeta}
                     isLoading={isLoadingFiles}
                     isDark={isDark}
                   />
+
+                  {/* Ask-bar — only shown once a repo is loaded */}
+                  <RepoMapAskBar repoMeta={repoMeta} />
                 </>
               ) : (
                 <CodeExplainer

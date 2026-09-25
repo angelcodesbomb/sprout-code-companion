@@ -3,17 +3,20 @@
 import { useState, useEffect } from "react";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { parseGithubTree } from "@/lib/parseGithubTree";
+import { buildRepoMap } from "@/lib/repoMap";
+import { useRepoMapSummarize } from "@/hooks/useRepoMapSummarize";
+import { RepoMapProvider } from "@/context/RepoMapContext";
 
 // ── Static mock data (agents + code explainer) ────────────────────────────────
 // These remain unchanged — only the `files` data is now driven by real GitHub data.
 
 const agents = [
-  { name: "UI",         status: "idle",   tone: "pink",  description: "Checks layouts and components" },
-  { name: "Database",   status: "idle",   tone: "cyan",  description: "Understands your data model" },
-  { name: "API",        status: "active", tone: "mint",  description: "Maps requests and responses" },
-  { name: "Review",     status: "active", tone: "coral", description: "Reviews code in context" },
-  { name: "Security",   status: "idle",   tone: "pink",  description: "Looks for risky patterns" },
-  { name: "Validation", status: "idle",   tone: "cyan",  description: "Checks inputs and edge cases" },
+  { name: "UI", status: "idle", tone: "pink", description: "Checks layouts and components" },
+  { name: "Database", status: "idle", tone: "cyan", description: "Understands your data model" },
+  { name: "API", status: "active", tone: "mint", description: "Maps requests and responses" },
+  { name: "Review", status: "active", tone: "coral", description: "Reviews code in context" },
+  { name: "Security", status: "idle", tone: "pink", description: "Looks for risky patterns" },
+  { name: "Validation", status: "idle", tone: "cyan", description: "Checks inputs and edge cases" },
 ];
 
 const codeBlocks = [
@@ -41,8 +44,8 @@ const codeBlocks = [
     title: "Loads and stores the files",
     explanation: "This function asks for the project's files, saves the result, and then marks loading as finished.",
     lines: [
-      { number: 8,  html: '  <b>async function</b> <mark>loadFiles</mark>() {' },
-      { number: 9,  html: '    <b>const</b> result = <b>await</b> getFiles(projectId);' },
+      { number: 8, html: '  <b>async function</b> <mark>loadFiles</mark>() {' },
+      { number: 9, html: '    <b>const</b> result = <b>await</b> getFiles(projectId);' },
       { number: 10, html: '    setFiles(result);' },
       { number: 11, html: '    setLoading(<u>false</u>);' },
       { number: 12, html: '  }' },
@@ -65,9 +68,20 @@ export default function WorkspaceClient() {
   const [isDark, setIsDark] = useState(false);
 
   // GitHub repo state
-  const [repoTree, setRepoTree]     = useState(null);    // null = nothing loaded yet
-  const [repoMeta, setRepoMeta]     = useState(null);    // { owner, repo, branch, fullName, ... }
-  const [isLoading, setIsLoading]   = useState(false);
+  const [repoTree, setRepoTree] = useState(null);    // null = nothing loaded yet
+  const [repoMeta, setRepoMeta] = useState(null);    // { owner, repo, branch, fullName, ... }
+  const [repoMap, setRepoMap] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const {
+    requestSummary,
+    requestNodeDetail,
+    getDescriptionForPath,
+    getDomainForPath,
+    getPointersForPath,
+    getRoleForPath,
+    getWorkflowForPath,
+  } = useRepoMapSummarize(repoMap, setRepoMap);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
@@ -84,6 +98,7 @@ export default function WorkspaceClient() {
     const tree = parseGithubTree(flatItems);
     setRepoTree(tree);
     setRepoMeta(meta);
+    setRepoMap(buildRepoMap(tree, meta));
     setIsLoading(false);
   }
 
@@ -92,21 +107,34 @@ export default function WorkspaceClient() {
     // Clear previous data so the skeleton shows cleanly
     setRepoTree(null);
     setRepoMeta(null);
+    setRepoMap(null);
   }
 
   return (
-    <DashboardShell
-      agents={agents}
-      // Pass the real tree (or null for empty state) instead of the old mock array.
-      // DashboardShell forwards this directly to <FileSystemMap nodes={files} />.
-      files={repoTree}
-      repoMeta={repoMeta}
-      isLoadingFiles={isLoading}
-      codeBlocks={codeBlocks}
-      isDark={isDark}
-      onThemeToggle={() => setIsDark((v) => !v)}
-      onRepoLoad={handleRepoLoad}
-      onLoadStart={handleLoadStart}
-    />
+    <RepoMapProvider
+      repoMap={repoMap}
+      setRepoMap={setRepoMap}
+      requestSummary={requestSummary}
+      requestNodeDetail={requestNodeDetail}
+      getDescriptionForPath={getDescriptionForPath}
+      getDomainForPath={getDomainForPath}
+      getPointersForPath={getPointersForPath}
+      getRoleForPath={getRoleForPath}
+      getWorkflowForPath={getWorkflowForPath}
+    >
+      <DashboardShell
+        agents={agents}
+        // Pass the real tree (or null for empty state) instead of the old mock array.
+        // DashboardShell forwards this directly to <FileSystemMap nodes={files} />.
+        files={repoTree}
+        repoMeta={repoMeta}
+        isLoadingFiles={isLoading}
+        codeBlocks={codeBlocks}
+        isDark={isDark}
+        onThemeToggle={() => setIsDark((v) => !v)}
+        onRepoLoad={handleRepoLoad}
+        onLoadStart={handleLoadStart}
+      />
+    </RepoMapProvider>
   );
 }
