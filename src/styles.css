@@ -2056,6 +2056,22 @@ button {
   animation: fmg-pop 280ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
+/* ── Fetching-node pulse (while raw content is loading) ────────────────── */
+@keyframes fmg-fetch-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0px transparent); opacity: 1; }
+  50%       { filter: drop-shadow(0 0 8px var(--coral)); opacity: 0.7; }
+}
+
+.fmg-node--fetching circle {
+  animation: fmg-fetch-pulse 900ms ease-in-out infinite;
+}
+
+/* ── Selected node highlight ring ───────────────────────────────────── */
+.fmg-node--selected circle:first-child {
+  stroke-width: 3.5 !important;
+  filter: drop-shadow(0 0 5px var(--coral));
+}
+
 /* ── Size-warning banner (>500 visible nodes) ─────────────────────────────── */
 .fmg-size-warning {
   position: absolute;
@@ -2211,6 +2227,17 @@ button {
   font: 400 8px var(--font-mono);
   color: var(--muted-foreground);
   word-break: break-all;
+}
+
+/* ── Double-click hint inside tooltip (file nodes only) ───────────────── */
+.fmg-tooltip__dblclick-hint {
+  display: block;
+  margin-top: 8px;
+  font: 600 8.5px var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--coral);
+  opacity: 0.85;
+  text-transform: uppercase;
 }
 
 .file-tree-popover__desc {
@@ -2746,6 +2773,47 @@ button {
   background: var(--mint);
 }
 
+/* ── CodeExplainer auto-load banners ──────────────────────────────────── */
+.ce-fetch-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: color-mix(in oklab, var(--card) 70%, transparent);
+  font: 500 12px var(--font-sans);
+  color: var(--muted-foreground);
+  animation: fmg-fetch-pulse 900ms ease-in-out infinite;
+}
+
+.ce-load-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--coral);
+  background: color-mix(in oklab, var(--coral) 10%, transparent);
+  font: 500 12px var(--font-sans);
+  color: var(--coral);
+}
+
+.ce-truncation-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border: 1.5px dashed var(--border);
+  background: color-mix(in oklab, var(--card) 60%, transparent);
+  font: 500 11px var(--font-mono);
+  color: var(--muted-foreground);
+}
+
 /* ── GitHub Auth UI ─────────────────────────────────────────────────────── */
 
 .gh-signin-btn {
@@ -2856,4 +2924,186 @@ button {
 .repo-error__signin-btn:hover {
   background: var(--foreground);
   color: var(--background);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Dependency-edge layer
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Dep-edge paths ─────────────────────────────────────────────────────── */
+.fmg-dep-link {
+  fill: none;
+  stroke: var(--coral);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  opacity: 0.55;
+  transition: stroke-width 180ms ease, opacity 180ms ease;
+}
+
+.fmg-dep-link--dim {
+  opacity: 0.07;
+}
+
+.fmg-dep-link--hot {
+  stroke-width: 2.8;
+  opacity: 1;
+  filter: drop-shadow(0 0 4px color-mix(in oklab, var(--coral) 60%, transparent));
+}
+
+/* ── Dep-edge hover tooltip ──────────────────────────────────────────────── */
+.fmg-dep-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--card);
+  border: 2px solid var(--coral);
+  border-radius: 10px 6px 11px 5px;
+  box-shadow: 2px 2px 0 color-mix(in oklab, var(--coral) 25%, transparent);
+  white-space: nowrap;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.fmg-dep-tooltip--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.fmg-dep-tooltip--hidden {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.fmg-dep-tooltip__pill {
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--coral);
+  background: color-mix(in oklab, var(--coral) 12%, transparent);
+  border-radius: 20px;
+  padding: 2px 6px;
+}
+
+.fmg-dep-tooltip__text {
+  font: 500 11px var(--font-mono);
+  color: var(--foreground);
+}
+
+/* ── Dep controls (toggle + loading pill) ───────────────────────────────── */
+.fmg-dep-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Loading spinner pill */
+.fmg-dep-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  font: 500 10px var(--font-mono);
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.fmg-dep-loading__icon {
+  animation: fmg-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes fmg-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Toggle switch */
+.fmg-dep-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 7px;
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 20px;
+  cursor: pointer;
+  font: 600 10px var(--font-mono);
+  color: var(--foreground);
+  user-select: none;
+  transition: border-color 180ms ease;
+}
+
+.fmg-dep-toggle:has(input:checked) {
+  border-color: var(--coral);
+}
+
+.fmg-dep-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Pill track */
+.fmg-dep-toggle__track {
+  position: relative;
+  width: 28px;
+  height: 14px;
+  background: var(--border);
+  border-radius: 20px;
+  flex-shrink: 0;
+  transition: background 180ms ease;
+}
+
+.fmg-dep-toggle:has(input:checked) .fmg-dep-toggle__track {
+  background: var(--coral);
+}
+
+/* Sliding thumb */
+.fmg-dep-toggle__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  transition: transform 180ms cubic-bezier(0.34,1.56,0.64,1);
+}
+
+.fmg-dep-toggle:has(input:checked) .fmg-dep-toggle__thumb {
+  transform: translateX(14px);
+}
+
+/* Label with icon + count badge */
+.fmg-dep-toggle__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fmg-dep-toggle__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  background: color-mix(in oklab, var(--coral) 15%, transparent);
+  color: var(--coral);
+  border-radius: 20px;
+  font: 700 9px var(--font-mono);
 }

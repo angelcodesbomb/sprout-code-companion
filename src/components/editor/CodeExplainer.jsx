@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Lightbulb, Sparkles, X, Code2, ArrowLeft, Loader2 } from "lucide-react";
+import { Lightbulb, Sparkles, X, Code2, ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 /** Basic client-side syntax highlight (no deps) */
@@ -14,7 +14,21 @@ function highlight(raw) {
     .replace(/(\w+)(?=\s*\()/g, "<mark>$1</mark>");
 }
 
-export function CodeExplainer() {
+/**
+ * Props:
+ *   initialCode      — string: pre-fetched file content (from graph double-click)
+ *   autoLoadedFrom   — string: filename shown in code panel header when auto-loaded
+ *   autoLoadError    — string | null: fetch/parse error message to show inline
+ *   isFetchingFile   — boolean: show loading overlay while fetch is in-flight
+ *   truncated        — boolean: whether initialCode was clipped to 1000 lines
+ */
+export function CodeExplainer({
+  initialCode = "",
+  autoLoadedFrom = "",
+  autoLoadError = null,
+  isFetchingFile = false,
+  truncated = false,
+}) {
   const [code, setCode] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [explanation, setExplanation] = useState(null);
@@ -23,6 +37,16 @@ export function CodeExplainer() {
   const [floatPos, setFloatPos] = useState(null);   // {x, y} for the floating button
   const [selectedSnippet, setSelectedSnippet] = useState("");
   const preRef = useRef(null);
+
+  // When a new file is auto-loaded from the graph, replace editor content
+  useEffect(() => {
+    if (!initialCode) return;
+    setCode(initialCode);
+    setSubmitted(true);
+    setExplanation(null);
+    setError(null);
+    setFloatPos(null);
+  }, [initialCode]);
 
   const lines = code.split("\n");
 
@@ -80,6 +104,11 @@ export function CodeExplainer() {
     setFloatPos(null);
   }
 
+  // The filename label shown in the code panel toolbar
+  const panelFileName = autoLoadedFrom
+    ? autoLoadedFrom.split("/").pop()
+    : "snippet.js";
+
   return (
     <section className="editor-view">
       <div className="view-heading">
@@ -94,6 +123,29 @@ export function CodeExplainer() {
         </div>
         <span className="view-heading__badge"><Sparkles size={13} /> AI ready</span>
       </div>
+
+      {/* ── Fetching overlay: shown while the graph node is loading ──────── */}
+      {isFetchingFile && (
+        <div className="ce-fetch-banner" role="status" aria-live="polite">
+          <Loader2 size={14} className="animate-spin" />
+          <span>Loading file from GitHub…</span>
+        </div>
+      )}
+
+      {/* ── Auto-load error state ─────────────────────────────────────────── */}
+      {autoLoadError && !isFetchingFile && (
+        <div className="ce-load-error" role="alert">
+          <AlertTriangle size={15} />
+          <span>{autoLoadError}</span>
+        </div>
+      )}
+
+      {/* ── Truncation notice ─────────────────────────────────────────────── */}
+      {truncated && submitted && !isFetchingFile && !autoLoadError && (
+        <div className="ce-truncation-notice" role="status">
+          <span>⚡ File was large — showing first 1 000 lines only.</span>
+        </div>
+      )}
 
       {!submitted ? (
         /* ── INPUT SCREEN ─────────────────────────────────────────────── */
@@ -150,7 +202,7 @@ export function CodeExplainer() {
           <div className="code-panel">
             <div className="code-panel__top">
               <span className="traffic-lights"><i /><i /><i /></span>
-              <strong>snippet.js</strong>
+              <strong>{panelFileName}</strong>
               <button
                 type="button"
                 onClick={handleReset}

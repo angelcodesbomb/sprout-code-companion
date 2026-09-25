@@ -37,9 +37,42 @@ export function DashboardShell({
   onThemeToggle,
   onRepoLoad,
   onLoadStart,
+  depEdges,
+  depEdgesByPath,
+  depStatus,
 }) {
   const [view, setView] = useState("map");
   const [activeAgent, setActiveAgent] = useState("Review");
+
+  // ── Explain-file bridge (graph double-click → CodeExplainer) ─────────────
+  const [explainCode,       setExplainCode]       = useState("");
+  const [explainFileName,   setExplainFileName]   = useState("");
+  const [explainError,      setExplainError]      = useState(null);
+  const [explainTruncated,  setExplainTruncated]  = useState(false);
+  const [isFetchingFile,    setIsFetchingFile]    = useState(false);
+
+  /**
+   * Called by FileMapGraph when a file node is double-clicked.
+   * Switches to the "code" tab and passes content/error down to CodeExplainer.
+   */
+  function handleExplainFile({ code = "", fileName = "", error = null, truncated = false }) {
+    setExplainCode(code);
+    setExplainFileName(fileName);
+    setExplainError(error);
+    setExplainTruncated(truncated);
+    setIsFetchingFile(false);
+    setView("code");
+  }
+
+  /** Called by FileMapGraph right when the fetch starts, before content arrives. */
+  function handleFetchingFile(fileName) {
+    setIsFetchingFile(true);
+    setExplainError(null);
+    setExplainCode("");
+    setExplainFileName(fileName);
+    setExplainTruncated(false);
+    setView("code");
+  }
   const { data: session, status } = useSession();
 
   useEffect(() => {
@@ -180,7 +213,7 @@ export function DashboardShell({
                       </h2>
                       <p style={{ margin: "7px 0 0", color: "var(--muted-foreground)", fontSize: 13 }}>
                         {repoMeta
-                          ? "Hover for a quick line. Click for pointers. Double-click a folder to focus it."
+                          ? "Hover for a quick line. Click for details. Double-click a folder to focus it, or a file to explain it."
                           : "Enter any public GitHub URL above."}
                       </p>
                     </div>
@@ -216,6 +249,11 @@ export function DashboardShell({
                     repoMeta={repoMeta}
                     isLoading={isLoadingFiles}
                     isDark={isDark}
+                    edges={depEdges}
+                    edgesByPath={depEdgesByPath}
+                    depStatus={depStatus}
+                    onExplainFile={handleExplainFile}
+                    onFetchingFile={handleFetchingFile}
                   />
 
                   {/* Ask-bar — only shown once a repo is loaded */}
@@ -226,6 +264,11 @@ export function DashboardShell({
                   title="Code, without the code-speak."
                   fileName="useProjectFiles.js"
                   blocks={codeBlocks}
+                  initialCode={explainCode}
+                  autoLoadedFrom={explainFileName}
+                  autoLoadError={explainError}
+                  isFetchingFile={isFetchingFile}
+                  truncated={explainTruncated}
                 />
               )}
             </motion.div>
