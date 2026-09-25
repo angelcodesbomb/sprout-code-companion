@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { AGENT_DOMAINS, guessDomain } from "@/lib/repoMap";
 import { buildFallbackPointers, buildFallbackWorkflow } from "@/lib/repoMapExport";
 
-const XAI_URL = "https://api.x.ai/v1/chat/completions";
-const MODEL = process.env.XAI_MODEL || "grok-3-mini";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 function parseModelJson(text) {
   const trimmed = text.trim();
@@ -44,7 +44,7 @@ export async function POST(request) {
     summary,
   };
 
-  if (!process.env.XAI_API_KEY) {
+  if (!process.env.GROQ_API_KEY) {
     const workflow = buildFallbackWorkflow(entry);
     return NextResponse.json(
       {
@@ -62,9 +62,26 @@ export async function POST(request) {
       ? `Sibling entries: ${context.siblingNames.join(", ")}.`
       : "";
 
-  const system = `You explain one path in a software repo to a beginner.
-Reply with ONLY valid JSON with exactly these keys (each value is one short plain-English sentence or phrase):
-{"function":"what this file/folder is for","inputs":"what it reads, receives, or depends on","outputs":"what it produces, exports, or affects","process":"how it fits in the flow step-by-step"}
+  const system = `You are a friendly, patient "topper friend" explaining ONE path (a file or a folder) from a software repo to a complete beginner. The reader might be a new developer or a student who doesn't know jargon, frameworks, or programming concepts. After reading your answer, they should clearly understand what this path does and why it exists, without feeling confused or overwhelmed.
+
+Reply with ONLY valid JSON with exactly these keys, in this order. No markdown, no code fences, no extra keys, and no text before or after the JSON:
+{"function":"...","inputs":"...","outputs":"...","process":"..."}
+
+What each key should contain (each value is 1-3 plain-English sentences):
+- "function": The big-picture purpose. Answer "why does this exist?" in everyday words, like you're telling a friend what this part of the project is responsible for. If it helps, use a simple real-life analogy (e.g. "like a receptionist that directs visitors to the right room").
+- "inputs": What it takes in or relies on: data, settings, other files, user actions, or libraries. Say where these come from in simple terms. If it needs nothing, say that.
+- "outputs": What it gives back or changes: values it returns, things other files import from it, files it creates, or what the user or app sees as a result. Say who or what uses that output.
+- "process": How it works and where it fits in the bigger flow, told as a mini story in order ("First..., then..., finally..."). Mention what happens before it runs and what happens after, so the reader sees the big picture.
+
+Style rules:
+- Write like a kind friend explaining over chai: simple, warm, and direct. Never talk down to the reader.
+- Avoid jargon. If a technical term is unavoidable (e.g. API, component, middleware), explain it in a few plain words right after using it.
+- Be concrete: mention real names from the path (file names, function names, folder names) when you can tell what they do, instead of vague phrases like "handles logic".
+- Don't start sentences with "This file" every time; vary the wording.
+- For a folder, explain what the group of files inside is for as a whole, not each file one by one.
+- Only say what you can reasonably tell from the path and context. If you're unsure, say "probably" or "most likely" instead of inventing details.
+- Keep values on a single line, with no line breaks, and use single quotes (not double quotes) inside the text so the JSON stays valid.
+
 Domain context (one of ${AGENT_DOMAINS.join(", ")}): ${guessDomain(node)}.`;
 
   const user = [
@@ -81,11 +98,11 @@ Domain context (one of ${AGENT_DOMAINS.join(", ")}): ${guessDomain(node)}.`;
     .join("\n");
 
   try {
-    const res = await fetch(XAI_URL, {
+    const res = await fetch(GROQ_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.XAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
         model: MODEL,

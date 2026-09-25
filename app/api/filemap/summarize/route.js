@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { AGENT_DOMAINS, guessDomain } from "@/lib/repoMap";
 
-const XAI_URL = "https://api.x.ai/v1/chat/completions";
-const MODEL = process.env.XAI_MODEL || "grok-3-mini";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 function parseModelJson(text) {
   const trimmed = text.trim();
@@ -22,7 +22,7 @@ function parseModelJson(text) {
 }
 
 export async function GET() {
-  return NextResponse.json({ aiEnabled: Boolean(process.env.XAI_API_KEY) });
+  return NextResponse.json({ aiEnabled: Boolean(process.env.GROQ_API_KEY) });
 }
 
 export async function POST(request) {
@@ -40,7 +40,7 @@ export async function POST(request) {
 
   const ruleDomain = guessDomain(node);
 
-  const apiKey = process.env.XAI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
       { useFallback: true, domain: ruleDomain },
@@ -71,7 +71,7 @@ Pick domain by primary purpose: UI (components/styles), Database (schema/migrati
     .join("\n");
 
   try {
-    const res = await fetch(XAI_URL, {
+    const res = await fetch(GROQ_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -91,8 +91,23 @@ Pick domain by primary purpose: UI (components/styles), Database (schema/migrati
     if (!res.ok) {
       const errText = await res.text();
       console.error("xAI error", res.status, errText.slice(0, 500));
+      
+      // Check if it's a credits issue
+      let needsCredits = false;
+      try {
+        const errorData = JSON.parse(errText);
+        if (errorData.code === 'permission-denied' && errorData.error?.includes('credits')) {
+          needsCredits = true;
+        }
+      } catch {}
+      
       return NextResponse.json(
-        { useFallback: true, domain: ruleDomain },
+        { 
+          useFallback: true, 
+          domain: ruleDomain,
+          error: res.status === 403 ? 'credits_exhausted' : 'api_error',
+          message: needsCredits ? 'x.ai account credits exhausted. Add credits to enable AI summaries.' : undefined
+        },
         { status: 503 }
       );
     }

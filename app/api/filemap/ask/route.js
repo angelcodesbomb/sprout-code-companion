@@ -5,8 +5,8 @@ import {
   resolvePathFromQuestion,
 } from "@/lib/repoMapAsk";
 
-const XAI_URL = "https://api.x.ai/v1/chat/completions";
-const MODEL = process.env.XAI_MODEL || "grok-3-mini";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 function parseModelJson(text) {
   const trimmed = text.trim();
@@ -44,7 +44,7 @@ export async function POST(request) {
 
   const offlinePath = map ? resolvePathFromQuestion(question, map) : null;
 
-  const apiKey = process.env.XAI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return NextResponse.json({
       answer: buildFallbackAnswer(question, map, offlinePath),
@@ -81,7 +81,7 @@ Crucial rule: If the user asks about a "function", "API", or "component" (e.g. "
     .join("\n");
 
   try {
-    const res = await fetch(XAI_URL, {
+    const res = await fetch(GROQ_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
