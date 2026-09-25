@@ -2745,3 +2745,115 @@ button {
 .ce-explain-pill:hover {
   background: var(--mint);
 }
+
+/* ── GitHub Auth UI ─────────────────────────────────────────────────────── */
+
+.gh-signin-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: 2px solid var(--foreground);
+  border-radius: 20px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-dm-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.gh-signin-btn:hover {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.gh-auth-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  border: 2px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gh-auth-chip__avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.gh-auth-chip__name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
+.gh-auth-chip__btn {
+  display: grid;
+  place-items: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted-foreground);
+  padding: 2px;
+  border-radius: 4px;
+  transition: color 0.12s;
+}
+
+.gh-auth-chip__btn:hover {
+  color: var(--foreground);
+}
+
+/* ── Repo input hint + inline sign-in ──────────────────────────────────── */
+
+.repo-input-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 7px 0 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.repo-input-hint__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--mint);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.repo-error__signin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1.5px solid var(--foreground);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.repo-error__signin-btn:hover {
+  background: var(--foreground);
+  color: var(--background);
+}
