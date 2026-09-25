@@ -42,7 +42,7 @@ export function DashboardShell({
   depStatus,
 }) {
   const [view, setView] = useState("map");
-  const [activeAgent, setActiveAgent] = useState("Review");
+  const [activeAgent, setActiveAgent] = useState(null);
 
   // ── Explain-file bridge (graph double-click → CodeExplainer) ─────────────
   const [explainCode,       setExplainCode]       = useState("");
@@ -157,6 +157,8 @@ export function DashboardShell({
           agents={agents}
           activeAgent={activeAgent}
           onAgentSelect={setActiveAgent}
+          activeView={view}
+          onViewSelect={setView}
         />
 
         <div className="dashboard-main">
@@ -180,7 +182,7 @@ export function DashboardShell({
               <Code2 size={16} /> Explain code
             </button>
             <span className="workspace-tabs__status">
-              <i /> {activeAgent} agent is active
+              <i /> {activeAgent ? `${activeAgent} agent is active` : "No agent selected"}
             </span>
           </div>
 
