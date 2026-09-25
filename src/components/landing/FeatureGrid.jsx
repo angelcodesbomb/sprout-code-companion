@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
-import { FileTree, MessageSquareText, Gauge } from "lucide-react";
+import { FolderTree, MessageSquareText, Gauge } from "lucide-react";
 
-const icons = { map: FileTree, explain: MessageSquareText, review: Gauge };
+const icons = { map: FolderTree, explain: MessageSquareText, review: Gauge };
 
 export function FeatureGrid({ heading, features }) {
   return (
