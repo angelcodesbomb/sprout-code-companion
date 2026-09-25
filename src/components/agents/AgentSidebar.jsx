@@ -1,5 +1,7 @@
 import { motion } from "motion/react";
 import { AppWindow, Database, Braces, ScanSearch, ShieldCheck, BadgeCheck, GitBranch, Code2 } from "lucide-react";
+import { OrchestratorStatus } from "../OrchestratorStatus";
+import { PIPELINE_AGENTS, resolveLiveAgentName } from "@/lib/orchestrator/agentDisplay";
 
 const agentIcons = {
   UI: AppWindow,
@@ -11,25 +13,26 @@ const agentIcons = {
 };
 
 const exploreItems = [
-  { id: "map",  label: "File Map",     Icon: GitBranch },
-  { id: "code", label: "Explain Code", Icon: Code2     },
+  { id: "map", label: "File Map", Icon: GitBranch },
+  { id: "code", label: "Explain Code", Icon: Code2 },
 ];
 
-/**
- * AgentSidebar
- *
- * Props:
- *   agents        — array of agent objects (UI/Database/API/Review/Security/Validation)
- *   activeAgent   — which pipeline agent is selected (null = none)
- *   onAgentSelect — (agentName) => void
- *   activeView    — "map" | "code"  — controls the Explore Code highlight
- *   onViewSelect  — (viewId) => void — switches the main content tab
- */
-export function AgentSidebar({ agents, activeAgent, onAgentSelect, activeView, onViewSelect }) {
+export function AgentSidebar({
+  activeAgent,
+  onAgentSelect,
+  activeView,
+  onViewSelect,
+  orchStatus,
+  orchSteps,
+  orchCurrentTool,
+  orchFinalAnswer,
+  orchError,
+  onOrchestratorRun,
+}) {
+  const liveAgentName = resolveLiveAgentName(orchSteps, orchCurrentTool, orchStatus);
+
   return (
     <aside className="agent-sidebar" aria-label="Sidebar navigation">
-
-      {/* ── Explore Code section ──────────────────────────────────────── */}
       <span className="agent-sidebar__label">EXPLORE CODE</span>
       <div className="agent-sidebar__list">
         {exploreItems.map(({ id, label, Icon }) => (
@@ -43,34 +46,41 @@ export function AgentSidebar({ agents, activeAgent, onAgentSelect, activeView, o
           >
             <span className="agent-card__avatar agent-card__avatar--cyan">
               <Icon size={19} />
-              {/* No status dot for explore items */}
             </span>
             <span className="agent-card__name">{label}</span>
           </button>
         ))}
       </div>
 
-      {/* ── Divider ───────────────────────────────────────────────────── */}
       <div className="agent-sidebar__divider" aria-hidden="true" />
 
-      {/* ── Pipeline Agents section ───────────────────────────────────── */}
+      <OrchestratorStatus
+        status={orchStatus}
+        steps={orchSteps}
+        currentTool={orchCurrentTool}
+        finalAnswer={orchFinalAnswer}
+        error={orchError}
+        onRun={onOrchestratorRun}
+      />
+
       <span className="agent-sidebar__label">AGENTS</span>
       <div className="agent-sidebar__list">
-        {agents.map((agent) => {
+        {PIPELINE_AGENTS.map((agent) => {
           const Icon = agentIcons[agent.name] || Braces;
+          const isLive = liveAgentName === agent.name;
           return (
             <button
               type="button"
               key={agent.name}
               className={`agent-card ${activeAgent === agent.name ? "is-selected" : ""}`}
               onClick={() => onAgentSelect(agent.name)}
-              aria-label={`${agent.name} agent — ${agent.status}`}
+              aria-label={`${agent.name} agent${isLive ? " — active" : ""}`}
             >
               <span className={`agent-card__avatar agent-card__avatar--${agent.tone}`}>
                 <Icon size={19} />
                 <motion.i
-                  className={`status-dot ${agent.status === "active" ? "is-active" : ""}`}
-                  animate={agent.status === "active" ? { scale: [1, 1.5, 1] } : {}}
+                  className={`status-dot ${isLive ? "is-live" : ""}`}
+                  animate={isLive ? { scale: [1, 1.35, 1] } : {}}
                   transition={{ duration: 1.5, repeat: Infinity }}
                 />
               </span>
@@ -80,7 +90,6 @@ export function AgentSidebar({ agents, activeAgent, onAgentSelect, activeView, o
           );
         })}
       </div>
-
     </aside>
   );
 }
