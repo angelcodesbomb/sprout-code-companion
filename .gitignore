@@ -8,17 +8,14 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.next
+out
 dist
-dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
-*.local
 
-# Wrangler / Cloudflare
-.wrangler/
-.dev.vars
+# Next.js telemetry
+.next/
+
+*.local
 
 # Editor directories and files
 .vscode/*
@@ -30,3 +27,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.env.local
