@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { parseGithubTree } from "@/lib/parseGithubTree";
 import { buildRepoMap } from "@/lib/repoMap";
@@ -10,15 +10,6 @@ import { RepoMapProvider } from "@/context/RepoMapContext";
 
 // ── Static mock data (agents + code explainer) ────────────────────────────────
 // These remain unchanged — only the `files` data is now driven by real GitHub data.
-
-const agents = [
-  { name: "UI", status: "idle", tone: "pink", description: "Checks layouts and components" },
-  { name: "Database", status: "idle", tone: "cyan", description: "Understands your data model" },
-  { name: "API", status: "active", tone: "mint", description: "Maps requests and responses" },
-  { name: "Review", status: "active", tone: "coral", description: "Reviews code in context" },
-  { name: "Security", status: "idle", tone: "pink", description: "Looks for risky patterns" },
-  { name: "Validation", status: "idle", tone: "cyan", description: "Checks inputs and edge cases" },
-];
 
 const codeBlocks = [
   {
@@ -68,10 +59,110 @@ const codeBlocks = [
 export default function WorkspaceClient() {
   const [isDark, setIsDark] = useState(false);
 
+  // ── Orchestrator state ───────────────────────────────────────────────────
+  const [orchStatus,      setOrchStatus]      = useState("idle");   // "idle"|"running"|"done"|"error"
+  const [orchSteps,       setOrchSteps]       = useState([]);
+  const [orchCurrentTool, setOrchCurrentTool] = useState(null);
+  const [orchFinalAnswer, setOrchFinalAnswer] = useState(null);
+  const [orchError,       setOrchError]       = useState(null);
+
+  const handleOrchestratorRun = useCallback(async (goal, options = {}) => {
+    setOrchStatus("running");
+    setOrchSteps([]);
+    setOrchCurrentTool(null);
+    setOrchFinalAnswer(null);
+    setOrchError(null);
+
+    try {
+      const res = await fetch("/api/orchestrator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          goal,
+          stream: true,
+          mapSnapshot: options.mapSnapshot ?? null,
+          autoApproveHuman: Boolean(options.autoApproveHuman),
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setOrchError(data.error ?? "Orchestrator request failed.");
+        setOrchStatus("error");
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setOrchError("Streaming not supported.");
+        setOrchStatus("error");
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() ?? "";
+
+        for (const chunk of chunks) {
+          const lines = chunk.split("\n");
+          let event = "message";
+          let dataStr = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) event = line.slice(7);
+            else if (line.startsWith("data: ")) dataStr = line.slice(6);
+          }
+          if (!dataStr) continue;
+
+          let data;
+          try {
+            data = JSON.parse(dataStr);
+          } catch {
+            continue;
+          }
+
+          if (event === "tool_start") {
+            setOrchCurrentTool(data.toolName ?? null);
+          } else if (event === "step") {
+            setOrchSteps((prev) => [...prev, data]);
+            setOrchCurrentTool(null);
+          } else if (event === "done") {
+            setOrchSteps(data.steps ?? []);
+            setOrchFinalAnswer(data.finalAnswer ?? null);
+            setOrchStatus("done");
+          } else if (event === "error") {
+            setOrchError(data.error ?? "Orchestrator failed.");
+            setOrchStatus("error");
+          }
+        }
+      }
+    } catch (err) {
+      setOrchError(err.message ?? "Network error.");
+      setOrchStatus("error");
+    } finally {
+      setOrchCurrentTool(null);
+    }
+  }, []);
+
   // GitHub repo state
   const [repoTree, setRepoTree] = useState(null);    // null = nothing loaded yet
   const [repoMeta, setRepoMeta] = useState(null);    // { owner, repo, branch, fullName, ... }
   const [repoMap, setRepoMap] = useState(null);
+
+  const runOrchestratorWithContext = useCallback(
+    (goal) =>
+      handleOrchestratorRun(goal, {
+        mapSnapshot: repoMap,
+        autoApproveHuman: true,
+      }),
+    [handleOrchestratorRun, repoMap]
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   const {
@@ -130,9 +221,6 @@ export default function WorkspaceClient() {
       getWorkflowForPath={getWorkflowForPath}
     >
       <DashboardShell
-        agents={agents}
-        // Pass the real tree (or null for empty state) instead of the old mock array.
-        // DashboardShell forwards this directly to <FileSystemMap nodes={files} />.
         files={repoTree}
         repoMeta={repoMeta}
         isLoadingFiles={isLoading}
@@ -144,6 +232,12 @@ export default function WorkspaceClient() {
         depEdges={depEdges}
         depEdgesByPath={depEdgesByPath}
         depStatus={depStatus}
+        orchStatus={orchStatus}
+        orchSteps={orchSteps}
+        orchCurrentTool={orchCurrentTool}
+        orchFinalAnswer={orchFinalAnswer}
+        orchError={orchError}
+        onOrchestratorRun={runOrchestratorWithContext}
       />
     </RepoMapProvider>
   );
