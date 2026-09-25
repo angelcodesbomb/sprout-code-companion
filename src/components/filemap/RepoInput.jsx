@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, AlertCircle, History, Github } from "lucide-react";
+import { ArrowRight, AlertCircle, History, Github, Lock } from "lucide-react";
+import { useSession, signIn } from "next-auth/react";
 import { useRecentRepos } from "@/hooks/useRecentRepos";
 
 /**
@@ -12,19 +13,16 @@ import { useRecentRepos } from "@/hooks/useRecentRepos";
  *   https://github.com/owner/repo
  *   https://github.com/owner/repo.git
  *   https://github.com/owner/repo/tree/main
- *   https://github.com/owner/repo/blob/main/file.js
  *   github.com/owner/repo  (no protocol)
  */
 export function parseGithubUrl(raw) {
   try {
     const url = raw.trim().replace(/\.git$/, "");
-    // Normalise — add https:// if missing so URL() can parse it
     const full = /^https?:\/\//i.test(url) ? url : `https://${url}`;
     const parsed = new URL(full);
 
     if (!parsed.hostname.endsWith("github.com")) return null;
 
-    // pathname is like /owner/repo or /owner/repo/tree/branch/...
     const parts = parsed.pathname.split("/").filter(Boolean);
     if (parts.length < 2) return null;
 
@@ -40,9 +38,11 @@ const ERROR_MESSAGES = {
   not_found:
     "Repo not found. Double-check the URL — it might be private or the name could have changed.",
   rate_limit:
-    "GitHub API rate limit reached (60 requests/hour for unauthenticated calls). Wait a minute or add a GITHUB_TOKEN env var to increase the limit.",
-  private:
-    "This repo is private or inaccessible. Only public repos are supported without an access token.",
+    "GitHub API rate limit reached. Sign in with GitHub above to get 5,000 requests/hour.",
+  auth_required:
+    "This repo is private. Sign in with GitHub above to access your private repos.",
+  forbidden:
+    "Access denied. Make sure you have permission to view this repo.",
   unknown:
     "Something went wrong fetching the repo. Check the URL and try again.",
 };
@@ -51,14 +51,15 @@ const ERROR_MESSAGES = {
  * RepoInput
  *
  * Props:
- *   onLoad(tree, repoMeta)  — called when the GitHub tree is successfully fetched and parsed
- *   onLoadStart()           — called the moment the fetch begins (for parent loading state)
+ *   onLoad(tree, repoMeta)  — called when the GitHub tree is successfully fetched
+ *   onLoadStart()           — called the moment the fetch begins
  *   isLoading               — controlled loading flag from parent
  */
 export function RepoInput({ onLoad, onLoadStart, isLoading }) {
   const [value, setValue] = useState("");
-  const [error, setError] = useState(null); // null | keyof ERROR_MESSAGES
+  const [error, setError] = useState(null);
   const { recents, addRecent } = useRecentRepos();
+  const { data: session } = useSession();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -73,60 +74,41 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
     onLoadStart?.();
 
     try {
-      const headers = {};
-      // Use NEXT_PUBLIC_GITHUB_TOKEN if available (set in .env.local).
-      // For server-side usage the plain GITHUB_TOKEN is preferred and
-      // handled in a Route Handler — this covers client-side demos.
-      if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_GITHUB_TOKEN) {
-        headers["Authorization"] = `Bearer ${process.env.NEXT_PUBLIC_GITHUB_TOKEN}`;
-      }
-
-      // 1. Fetch the repo metadata to get the default branch name.
-      const repoRes = await fetch(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
-        { headers }
+      // All GitHub API calls go through our server-side proxy.
+      // The proxy uses the user's OAuth token (private repos) or falls back
+      // to GITHUB_TOKEN env var / unauthenticated (public repos only).
+      const res = await fetch(
+        `/api/github/tree?owner=${encodeURIComponent(parsed.owner)}&repo=${encodeURIComponent(parsed.repo)}`
       );
 
-      if (repoRes.status === 404) { setError("not_found"); return; }
-      if (repoRes.status === 403 || repoRes.status === 401) { setError("private"); return; }
-      if (repoRes.status === 429 || repoRes.headers.get("x-ratelimit-remaining") === "0") {
+      const data = await res.json();
+
+      if (!res.ok) {
+        switch (data.error) {
+          case "not_found":
+            setError("not_found");
+            break;
+          case "auth_required":
+            setError("auth_required");
+            break;
+          case "forbidden":
+            setError("forbidden");
+            break;
+          default:
+            setError("unknown");
+        }
+        return;
+      }
+
+      // Check rate-limit headers surfaced by the proxy
+      const remaining = res.headers.get("x-ratelimit-remaining");
+      if (remaining !== null && Number(remaining) === 0) {
         setError("rate_limit");
         return;
       }
-      if (!repoRes.ok) { setError("unknown"); return; }
 
-      const repoData = await repoRes.json();
-      const defaultBranch = repoData.default_branch ?? "main";
-
-      // 2. Fetch the full recursive tree using the default branch SHA.
-      const treeRes = await fetch(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/git/trees/${defaultBranch}?recursive=1`,
-        { headers }
-      );
-
-      if (treeRes.status === 404) { setError("not_found"); return; }
-      if (treeRes.status === 403 || treeRes.status === 401) { setError("private"); return; }
-      if (treeRes.status === 429 || treeRes.headers.get("x-ratelimit-remaining") === "0") {
-        setError("rate_limit");
-        return;
-      }
-      if (!treeRes.ok) { setError("unknown"); return; }
-
-      const treeData = await treeRes.json();
-
-      // GitHub returns { tree: [...], truncated: bool }.
-      // When truncated is true the repo is very large and the tree is partial.
-      const meta = {
-        owner: parsed.owner,
-        repo: parsed.repo,
-        branch: defaultBranch,
-        fullName: repoData.full_name,
-        description: repoData.description,
-        truncated: treeData.truncated ?? false,
-      };
-
-      onLoad(treeData.tree ?? [], meta);
-      addRecent(meta);
+      onLoad(data.tree ?? [], data.meta);
+      addRecent({ ...data.meta, url: value.trim() });
     } catch {
       setError("unknown");
     }
@@ -151,7 +133,7 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
                 type="button"
                 className="repo-recent-card"
                 onClick={() => {
-                  setValue(r.url);
+                  setValue(r.url ?? `https://github.com/${r.owner}/${r.repo}`);
                   setTimeout(() => {
                     document.getElementById("repo-submit-btn")?.click();
                   }, 50);
@@ -161,18 +143,26 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
                 <div className="repo-recent-card__text">
                   <span className="rr-owner">{r.owner}/</span>
                   <strong className="rr-repo">{r.repo}</strong>
+                  {r.private && (
+                    <Lock size={11} style={{ marginLeft: 4, opacity: 0.6 }} aria-label="private" />
+                  )}
                 </div>
               </button>
             ))}
           </div>
         </motion.div>
       )}
+
       <form className="repo-input-bar" onSubmit={handleSubmit} role="search" aria-label="Load GitHub repository">
         <input
           className="repo-input-bar__field"
           type="url"
           inputMode="url"
-          placeholder="https://github.com/owner/repo"
+          placeholder={
+            session
+              ? "https://github.com/owner/repo  (private repos supported)"
+              : "https://github.com/owner/repo"
+          }
           value={value}
           onChange={(e) => { setValue(e.target.value); setError(null); }}
           disabled={isLoading}
@@ -182,7 +172,6 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
           spellCheck={false}
         />
 
-        {/* Reuses the same pill-button pattern as ActionButton */}
         <motion.span
           className="action-button action-button--mint"
           whileHover={isLoading ? {} : { scale: 1.035, y: -2 }}
@@ -203,6 +192,24 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
         </motion.span>
       </form>
 
+      {/* Private repo nudge when not signed in */}
+      {!session && !error && (
+        <p className="repo-input-hint">
+          <Lock size={11} aria-hidden="true" />
+          <span>
+            For private repos,{" "}
+            <button
+              type="button"
+              className="repo-input-hint__link"
+              onClick={() => signIn("github")}
+            >
+              sign in with GitHub
+            </button>
+            .
+          </span>
+        </p>
+      )}
+
       {error && (
         <div
           className="repo-error"
@@ -221,11 +228,25 @@ export function RepoInput({ onLoad, onLoadStart, isLoading }) {
                   ? "Repo not found"
                   : error === "rate_limit"
                     ? "Rate limit reached"
-                    : error === "private"
-                      ? "Access denied"
-                      : "Something went wrong"}
+                    : error === "auth_required"
+                      ? "Sign in required"
+                      : error === "forbidden"
+                        ? "Access denied"
+                        : "Something went wrong"}
             </p>
             <p className="repo-error__message">{ERROR_MESSAGES[error]}</p>
+            {(error === "auth_required" || error === "rate_limit") && !session && (
+              <button
+                type="button"
+                className="repo-error__signin-btn"
+                onClick={() => signIn("github")}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor" width={13} height={13}>
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+                </svg>
+                Sign in with GitHub
+              </button>
+            )}
           </div>
         </div>
       )}
