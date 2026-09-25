@@ -20,11 +20,16 @@
  * 4. drillInto / redraw are refs (useRef), not useCallback closures, so the
  *    D3 event handlers (which close over the ref) always call the current
  *    version without stale closure issues.
+ *
+ * 5. Dependency edges (file→file imports) are drawn as a SECOND layer above
+ *    containment links. They are stored in posMapRef (path→Cartesian) after
+ *    each D3 layout run so they can be redrawn independently when `edges` or
+ *    `showDeps` change without triggering a full tree redraw.
  */
 
 import { useEffect, useRef, useState } from "react";
 import * as d3 from "d3";
-import { RotateCcw, GitBranch } from "lucide-react";
+import { RotateCcw, GitBranch, GitMerge, Loader2 } from "lucide-react";
 import { countFiles } from "@/lib/parseGithubTree";
 import { DOMAIN_TONE } from "@/lib/repoMap";
 import { useRepoMapContext } from "@/context/RepoMapContext";
@@ -32,17 +37,22 @@ import { FileMapNodePanel } from "./FileMapNodePanel";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PROGRESSIVE_THRESHOLD = 150;  // if total nodes > this, start collapsed
-const SIZE_WARN_THRESHOLD = 500;  // show banner above this many visible nodes
-const CANVAS_H = 620;  // must match .fmg-wrap height in CSS
-const MARGIN = 60;   // px breathing room around radial tree
+const PROGRESSIVE_THRESHOLD = 150;
+const SIZE_WARN_THRESHOLD   = 500;
+const CANVAS_H = 620;
+const MARGIN   = 60;
 
-// Node radius by depth (root=0 is largest)
 const R_BY_DEPTH = [22, 13, 10, 8, 6, 5];
 const nodeR = (depth) => R_BY_DEPTH[Math.min(depth, R_BY_DEPTH.length - 1)];
 
-// Four brand tones assigned round-robin to top-level folders
 const TONES = ["coral", "mint", "cyan", "pink"];
+
+// Dep-edge accent — coral, matching the brand highlight colour.
+// A single colour keeps it readable; direction is shown by the arrowhead.
+const DEP_COLOR_DEFAULT = "var(--coral)";
+const DEP_COLOR_HOT     = "var(--coral)";   // hovered edge — same but full opacity
+const DEP_STROKE_W      = 1.8;
+const DEP_STROKE_W_HOT  = 2.8;
 
 // CSS var cache — busted on theme switch
 let _cssCache = {};
@@ -55,13 +65,11 @@ function bustCssCache() { _cssCache = {}; }
 
 // ─── Pure tree helpers ────────────────────────────────────────────────────────
 
-/** Count visible nodes, treating _collapsed folders as leaves. */
 function countVisible(node) {
   if (!node.children || node._collapsed) return 1;
   return 1 + node.children.reduce((s, c) => s + countVisible(c), 0);
 }
 
-/** Deep-clone nodes array, stamping _tone and _collapsed onto each node. */
 function cloneNodes(nodes, toneIdx = 0, depth = 0) {
   return nodes.map((n, i) => {
     const tone = depth === 0 ? (i % TONES.length) : toneIdx;
@@ -74,19 +82,16 @@ function cloneNodes(nodes, toneIdx = 0, depth = 0) {
   });
 }
 
-/** Wrap cloned top-level nodes in a single synthetic root. */
 function syntheticRoot(nodes, name) {
   return { name: name || "repo", path: "", type: "folder", _tone: 0, _collapsed: false, children: nodes };
 }
 
-/** Build d3.hierarchy, hiding children of collapsed folders. */
 function buildH(root) {
   return d3.hierarchy(root, (d) =>
     (d.type === "folder" && !d._collapsed && d.children?.length) ? d.children : null
   );
 }
 
-/** Collect all d3 ancestor nodes of n (inclusive, root→n). */
 function getAncestors(n) {
   const acc = [];
   let cur = n;
@@ -94,19 +99,37 @@ function getAncestors(n) {
   return acc;
 }
 
-/** Recursively collapse folders at depth >= minDepth (mutates in place). */
 function collapseBelow(node, minDepth, cur = 0) {
   if (!node.children) return;
   if (cur >= minDepth && node.type === "folder") node._collapsed = true;
   node.children.forEach((c) => collapseBelow(c, minDepth, cur + 1));
 }
 
-/** Convert polar (angle in radians, radius) to Cartesian {x, y}. */
 function polar2cart(angle, r) {
   return { x: Math.cos(angle - Math.PI / 2) * r, y: Math.sin(angle - Math.PI / 2) * r };
 }
 
-// ─── Skeleton & empty states (unchanged from FileSystemMap) ──────────────────
+// ─── Dep-edge path generator ──────────────────────────────────────────────────
+
+/**
+ * Draw a dep edge as a slightly-offset cubic Bézier so it doesn't exactly
+ * overlap with the structural containment lines that share the same endpoint.
+ * The offset is perpendicular to the chord, giving a gentle arc.
+ */
+function depEdgePath(sx, sy, tx, ty) {
+  const mx = (sx + tx) / 2;
+  const my = (sy + ty) / 2;
+  // Perpendicular offset — 18% of chord length, always curving "outward"
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  const perp = 0.18;
+  const cx = mx - dy * perp;
+  const cy = my + dx * perp;
+  return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`;
+}
+
+// ─── Skeleton & empty states ──────────────────────────────────────────────────
 
 const GHOST_POS = ["root", "mid-left", "mid-right", "low-left", "low-center", "low-right"];
 
@@ -137,7 +160,19 @@ function EmptyCanvas() {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
+/**
+ * Props:
+ *   nodes           — nested tree from parseGithubTree (or null)
+ *   repoMeta        — { owner, repo, branch, fullName, … } | null
+ *   isLoading       — boolean
+ *   isDark          — boolean
+ *   edges           — Array<{from, to, type}> from useRepoDependencies
+ *   edgesByPath     — Map<path, {out, in}> from useRepoDependencies
+ *   depStatus       — "idle"|"loading"|"done"|"error"
+ *   onExplainFile   — ({ code, fileName, error, truncated }) => void
+ *   onFetchingFile  — (fileName) => void
+ */
+export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], edgesByPath, depStatus = "idle", onExplainFile, onFetchingFile }) {
   const {
     requestSummary,
     requestNodeDetail,
@@ -146,52 +181,74 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     registerGraphNavigator,
   } = useRepoMapContext();
 
-  const svgRef = useRef(null);
+  const svgRef  = useRef(null);
   const wrapRef = useRef(null);
 
   const requestSummaryRef = useRef(requestSummary);
-  const requestDetailRef = useRef(requestNodeDetail);
-  const getDomainRef = useRef(getDomainForPath);
+  const requestDetailRef  = useRef(requestNodeDetail);
+  const getDomainRef      = useRef(getDomainForPath);
   requestSummaryRef.current = requestSummary;
-  requestDetailRef.current = requestNodeDetail;
-  getDomainRef.current = getDomainForPath;
+  requestDetailRef.current  = requestNodeDetail;
+  getDomainRef.current      = getDomainForPath;
 
-  // Stable mutable refs — safe to read inside D3 event handlers
-  const treeRef = useRef(null);   // working copy of the cloned tree
-  const zoomRef = useRef(null);   // d3.zoom instance
-  const linkSelRef = useRef(null);   // current link selection (for hover highlighting)
-  const nodeSelRef = useRef(null);   // current node selection
+  // Stable mutable refs
+  const treeRef      = useRef(null);
+  const zoomRef      = useRef(null);
+  const linkSelRef   = useRef(null);   // containment links selection
+  const nodeSelRef   = useRef(null);
+  const depSelRef    = useRef(null);   // dep-edge paths selection
+  const posMapRef    = useRef(new Map()); // path → {_cx, _cy} — filled after each layout
 
-  // These refs hold the *current* versions of state-setter callbacks so
-  // D3 event handlers never close over stale values.
-  const setFocusRef = useRef(null);
-  const setBreadRef = useRef(null);
-  const setTooltipRef = useRef(null);
-  const setDrawKeyRef = useRef(null);
+  const setFocusRef    = useRef(null);
+  const setBreadRef    = useRef(null);
+  const setTooltipRef  = useRef(null);
+  const setDrawKeyRef  = useRef(null);
 
   // React state
-  const [focusNode, setFocusNode] = useState(null);
-  const [breadcrumb, setBreadcrumb] = useState([]);
-  const [tooltip, setTooltip] = useState({ visible: false, x: 0, y: 0, node: null });
+  const [focusNode,    setFocusNode]    = useState(null);
+  const [breadcrumb,   setBreadcrumb]   = useState([]);
+  const [tooltip,      setTooltip]      = useState({ visible: false, x: 0, y: 0, node: null });
+  const [edgeTooltip,  setEdgeTooltip]  = useState({ visible: false, x: 0, y: 0, from: "", to: "" });
   const [visibleCount, setVisibleCount] = useState(0);
-  const [drawKey, setDrawKey] = useState(0);
+  const [drawKey,      setDrawKey]      = useState(0);
   const [selectedNode, setSelectedNode] = useState(null);
+  const [showDeps,     setShowDeps]     = useState(true); // dep toggle
 
   const setSelectedRef = useRef(null);
   setSelectedRef.current = setSelectedNode;
 
-  // Keep refs in sync with latest setters
-  setFocusRef.current = setFocusNode;
-  setBreadRef.current = setBreadcrumb;
+  setFocusRef.current   = setFocusNode;
+  setBreadRef.current   = setBreadcrumb;
   setTooltipRef.current = setTooltip;
   setDrawKeyRef.current = setDrawKey;
+
+  // Keep a ref to showDeps so D3 handlers can read the current value
+  const showDepsRef = useRef(showDeps);
+  showDepsRef.current = showDeps;
+
+  // Keep a ref to edgesByPath so hover handlers always see the latest map
+  const edgesByPathRef = useRef(edgesByPath);
+  edgesByPathRef.current = edgesByPath;
+
+  // ── Explain-file bridge refs (stable for D3 closures) ─────────────────────
+  const onExplainFileRef  = useRef(onExplainFile);
+  const onFetchingFileRef = useRef(onFetchingFile);
+  onExplainFileRef.current  = onExplainFile;
+  onFetchingFileRef.current = onFetchingFile;
+
+  // Tracks which node path is currently being fetched so we can pulse it
+  const [loadingNodePath, setLoadingNodePath] = useState(null);
+  const loadingNodePathRef = useRef(null);
+  loadingNodePathRef.current = loadingNodePath;
 
   // ── Reset everything when a new repo loads ──────────────────────────────
   useEffect(() => {
     treeRef.current = null;
+    posMapRef.current = new Map();
     setFocusNode(null);
     setBreadcrumb([]);
     setTooltip({ visible: false, x: 0, y: 0, node: null });
+    setEdgeTooltip({ visible: false, x: 0, y: 0, from: "", to: "" });
     setSelectedNode(null);
     setDrawKey(0);
   }, [nodes]);
@@ -199,7 +256,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
   // ── Bust colour cache on theme change ───────────────────────────────────
   useEffect(() => { bustCssCache(); }, [isDark]);
 
-  // ── Refresh domain pills when AI fills in tags (no full graph redraw) ───
+  // ── Refresh domain pills when AI fills in tags ───────────────────────────
   useEffect(() => {
     const sel = nodeSelRef.current;
     if (!sel?.size()) return;
@@ -215,7 +272,14 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     });
   }, [getDomainForPath, getDescriptionForPath]);
 
-  // ── Highlight selected node ring ────────────────────────────────────────
+  // ── Pulse class on the node being fetched ────────────────────────────────
+  useEffect(() => {
+    const sel = nodeSelRef.current;
+    if (!sel?.size()) return;
+    sel.classed("fmg-node--fetching", (n) => n.data.path === loadingNodePath);
+  }, [loadingNodePath, drawKey]);
+
+  // ── Highlight selected node ring ─────────────────────────────────────────
   useEffect(() => {
     const sel = nodeSelRef.current;
     if (!sel?.size()) return;
@@ -223,7 +287,142 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     sel.classed("fmg-node--selected", (n) => n.data.path === path);
   }, [selectedNode, drawKey]);
 
-  // ── Main D3 draw effect ─────────────────────────────────────────────────
+  // ── Draw / redraw dep-edge layer ─────────────────────────────────────────
+  // This runs independently of the main D3 draw effect so dep edges can
+  // appear/disappear without re-running the expensive full layout.
+  useEffect(() => {
+    const svg = svgRef.current ? d3.select(svgRef.current) : null;
+    if (!svg) return;
+
+    const g = svg.select(".fmg-g");
+    if (g.empty()) return;
+
+    // Always remove the old layer first — we either replace or leave empty
+    g.select(".fmg-dep-links").remove();
+
+    const posMap = posMapRef.current;
+    if (!showDeps || !edges?.length || depStatus !== "done" || !posMap.size) return;
+
+    // Only keep edges where BOTH endpoints are currently visible in posMap
+    const visible = edges.filter(
+      (e) => posMap.has(e.from) && posMap.has(e.to) && e.from !== e.to
+    );
+    if (!visible.length) return;
+
+    // ── Arrowhead marker defs ──────────────────────────────────────────────
+    // Append <defs> once per SVG (inside g so zoom transform doesn't affect it)
+    let defs = svg.select("defs.fmg-dep-defs");
+    if (defs.empty()) {
+      defs = svg.insert("defs", ":first-child").attr("class", "fmg-dep-defs");
+    }
+    defs.selectAll("marker").remove();
+
+    // Default arrowhead
+    defs.append("marker")
+      .attr("id", "fmg-arrow")
+      .attr("viewBox", "0 -4 8 8")
+      .attr("refX", 7)
+      .attr("refY", 0)
+      .attr("markerWidth", 5)
+      .attr("markerHeight", 5)
+      .attr("orient", "auto")
+      .append("path")
+        .attr("d", "M0,-4L8,0L0,4")
+        .attr("fill", cssVar("coral"))
+        .attr("opacity", 0.75);
+
+    // Hovered / hot arrowhead
+    defs.append("marker")
+      .attr("id", "fmg-arrow-hot")
+      .attr("viewBox", "0 -4 8 8")
+      .attr("refX", 7)
+      .attr("refY", 0)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto")
+      .append("path")
+        .attr("d", "M0,-4L8,0L0,4")
+        .attr("fill", cssVar("coral"))
+        .attr("opacity", 1);
+
+    // ── Layer group — inserted BELOW .fmg-nodes but ABOVE .fmg-links ──────
+    // D3 append order: links first, then dep-links, then nodes.
+    // We insert before .fmg-nodes so edges appear underneath node circles.
+    const depG = g.insert("g", ".fmg-nodes")
+      .attr("class", "fmg-dep-links");
+
+    // Invisible wider hit-area paths (for easy hover on thin lines)
+    const hitSel = depG.selectAll("path.fmg-dep-hit")
+      .data(visible, (e) => `${e.from}→${e.to}`)
+      .join("path")
+      .attr("class", "fmg-dep-hit")
+      .attr("d", (e) => {
+        const s = posMap.get(e.from);
+        const t = posMap.get(e.to);
+        return depEdgePath(s._cx, s._cy, t._cx, t._cy);
+      })
+      .attr("fill", "none")
+      .attr("stroke", "transparent")
+      .attr("stroke-width", 10)  // fat invisible hit zone
+      .style("cursor", "crosshair");
+
+    // Visible dep-edge paths
+    const depSel = depG.selectAll("path.fmg-dep-link")
+      .data(visible, (e) => `${e.from}→${e.to}`)
+      .join("path")
+      .attr("class", "fmg-dep-link")
+      .attr("d", (e) => {
+        const s = posMap.get(e.from);
+        const t = posMap.get(e.to);
+        return depEdgePath(s._cx, s._cy, t._cx, t._cy);
+      })
+      .attr("marker-end", "url(#fmg-arrow)")
+      .attr("pointer-events", "none"); // hit area handles events
+
+    depSelRef.current = depSel;
+
+    // ── Edge hover — show tooltip, highlight touching edges ────────────────
+    hitSel
+      .on("mouseenter", function (event, e) {
+        if (!showDepsRef.current) return;
+
+        // Highlight this edge
+        depSelRef.current
+          ?.classed("fmg-dep-link--dim", (d) => d.from !== e.from || d.to !== e.to)
+          .classed("fmg-dep-link--hot", (d) => d.from === e.from && d.to === e.to);
+
+        // Update marker on hot edge
+        depSel.filter((d) => d.from === e.from && d.to === e.to)
+          .attr("marker-end", "url(#fmg-arrow-hot)");
+
+        // Edge tooltip — positioned at the midpoint of the path
+        const pathEl = depSel.filter((d) => d.from === e.from && d.to === e.to).node();
+        if (pathEl && svgRef.current) {
+          const svgRect = svgRef.current.getBoundingClientRect();
+          const transform = d3.zoomTransform(svgRef.current);
+          const totalLen = pathEl.getTotalLength();
+          const mid = pathEl.getPointAtLength(totalLen / 2);
+          const [sx, sy] = transform.apply([mid.x, mid.y]);
+          const ex = sx + svgRect.width / 2;
+          const ey = sy + svgRect.height / 2;
+          const fromName = e.from.split("/").pop();
+          const toName   = e.to.split("/").pop();
+          setEdgeTooltip({ visible: true, x: ex + 10, y: ey - 28, from: fromName, to: toName });
+        }
+      })
+      .on("mouseleave", function () {
+        depSelRef.current
+          ?.classed("fmg-dep-link--dim", false)
+          .classed("fmg-dep-link--hot", false);
+        depSel.attr("marker-end", "url(#fmg-arrow)");
+        setEdgeTooltip({ visible: false, x: 0, y: 0, from: "", to: "" });
+      });
+
+  // Re-run when dep data, toggle, or tree layout changes (drawKey tracks the latter)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edges, depStatus, showDeps, drawKey, nodes, focusNode]);
+
+  // ── Main D3 draw effect ──────────────────────────────────────────────────
   useEffect(() => {
     if (!nodes?.length || !svgRef.current || !wrapRef.current) return;
 
@@ -235,18 +434,18 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     // 1. Build working tree (once per repo load)
     if (!treeRef.current) {
       const cloned = cloneNodes(nodes);
-      const root = syntheticRoot(cloned, repoMeta?.repo ?? "repo");
+      const root   = syntheticRoot(cloned, repoMeta?.repo ?? "repo");
       treeRef.current = root;
       if (countVisible(root) > PROGRESSIVE_THRESHOLD) {
         collapseBelow(root, 1);
       }
     }
 
-    // 2. Pick display root (full tree or drilled-in subtree)
+    // 2. Pick display root
     const displayRoot = focusNode ?? treeRef.current;
 
-    // 3. Build hierarchy & run layout
-    const rootH = buildH(displayRoot);
+    // 3. Layout
+    const rootH  = buildH(displayRoot);
     const radius = Math.min(W, H) / 2 - MARGIN;
 
     d3.cluster()
@@ -254,12 +453,18 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
       .separation((a, b) => (a.parent === b.parent ? 1 : 1.8) / Math.max(1, a.depth))
       (rootH);
 
-    // Pre-compute Cartesian positions for every node
     rootH.each((d) => {
       const p = polar2cart(d.x, d.y);
       d._cx = p.x;
       d._cy = p.y;
     });
+
+    // ── Store positions so dep-edge effect can use them ────────────────────
+    const posMap = new Map();
+    rootH.descendants().forEach((d) => {
+      posMap.set(d.data.path, { _cx: d._cx, _cy: d._cy });
+    });
+    posMapRef.current = posMap;
 
     setVisibleCount(rootH.descendants().length);
 
@@ -267,7 +472,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     svg.attr("viewBox", `${-W / 2} ${-H / 2} ${W} ${H}`);
     svg.selectAll("*").remove();
 
-    // Panning group (zoom target)
+    // Panning group
     const g = svg.append("g").attr("class", "fmg-g");
 
     // 5. Zoom
@@ -277,19 +482,14 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
       .on("zoom", (e) => {
         g.attr("transform", e.transform);
         setTooltipRef.current((t) => t.visible ? { ...t, visible: false } : t);
+        setEdgeTooltip({ visible: false, x: 0, y: 0, from: "", to: "" });
       });
     svg.call(zoom);
     zoomRef.current = zoom;
 
-    // 6. Edges — drawn as curved lines between Cartesian positions
-    const line = d3.linkVertical()
-      .x((d) => d._cx)
-      .y((d) => d._cy);
-
-    // For radial we use a custom cubic bezier between source and target
+    // 6. Containment edges
     function radialLink(d) {
       const s = d.source, t = d.target;
-      // Midpoint on a line 60% of the way from parent to child radius
       const mr = (s.y + t.y) / 2;
       const ms = polar2cart(s.x, mr);
       const mt = polar2cart(t.x, mr);
@@ -303,7 +503,6 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
       .attr("class", "fmg-link")
       .attr("d", radialLink);
 
-    // Grow-in animation — set --len per path, add class
     linkSel.each(function (d) {
       const len = this.getTotalLength();
       this.style.setProperty("--len", `${len}px`);
@@ -312,7 +511,11 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     linkSel.classed("fmg-link--animate", true);
     linkSelRef.current = linkSel;
 
-    // 7. Nodes — positioned at Cartesian coords, NO rotate transform
+    // NOTE: dep-link layer is NOT drawn here — a separate useEffect handles it
+    // so it can redraw independently when `edges` arrives without re-running
+    // the expensive full layout.
+
+    // 7. Nodes
     const nodeSel = g.append("g").attr("class", "fmg-nodes")
       .selectAll("g")
       .data(rootH.descendants())
@@ -322,78 +525,54 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
 
     nodeSelRef.current = nodeSel;
 
-    // Draw each node's circle(s) and label
     nodeSel.each(function (d) {
-      const el = d3.select(this);
-      const isRoot = d.depth === 0;
+      const el      = d3.select(this);
+      const isRoot  = d.depth === 0;
       const isFolder = d.data.type === "folder";
-      const r = nodeR(d.depth);
+      const r    = nodeR(d.depth);
       const tone = d.data._tone ?? 0;
       const fill = cssVar(TONES[tone]);
 
-      // Pop-in via CSS animation — delay by depth
-      el.style("opacity", 0)
-        .style("animation-delay", `${d.depth * 35}ms`);
+      el.style("opacity", 0).style("animation-delay", `${d.depth * 35}ms`);
+      el.transition().delay(d.depth * 35).duration(220).style("opacity", 1);
 
-      // Animate opacity in (simpler than fmg-pop which conflicted with transform)
-      el.transition()
-        .delay(d.depth * 35)
-        .duration(220)
-        .style("opacity", 1);
-
-      // Main circle
       el.append("circle")
         .attr("r", r)
         .attr("fill", isRoot ? cssVar("coral") : isFolder ? "var(--card)" : fill)
         .attr("stroke", isRoot ? "var(--foreground)" : fill)
         .attr("stroke-width", isRoot ? 3 : isFolder ? 2.5 : 1.5);
 
-      // Root: dashed inner ring for the "trunk" look
       if (isRoot) {
         el.append("circle")
-          .attr("r", r - 7)
-          .attr("fill", "none")
-          .attr("stroke", "var(--foreground)")
-          .attr("stroke-width", 1.5)
-          .attr("stroke-dasharray", "3 3")
-          .attr("opacity", 0.55);
+          .attr("r", r - 7).attr("fill", "none")
+          .attr("stroke", "var(--foreground)").attr("stroke-width", 1.5)
+          .attr("stroke-dasharray", "3 3").attr("opacity", 0.55);
       }
 
-      // Collapsed folder dot
       if (isFolder && d.data._collapsed && d.data.children?.length) {
         el.append("circle")
-          .attr("r", Math.max(2, r * 0.35))
-          .attr("fill", fill)
+          .attr("r", Math.max(2, r * 0.35)).attr("fill", fill)
           .attr("pointer-events", "none");
       }
 
-      // Agent domain pill (skip synthetic root)
       if (!isRoot) {
-        const domain = getDomainRef.current?.(d.data.path);
+        const domain   = getDomainRef.current?.(d.data.path);
         const toneName = domain ? (DOMAIN_TONE[domain] ?? TONES[tone]) : TONES[tone];
         const pillFill = domain ? cssVar(toneName) : cssVar(TONES[tone]);
         el.append("rect")
           .attr("class", "fmg-domain-pill")
-          .attr("x", r * 0.55)
-          .attr("y", -r * 0.85)
-          .attr("width", domain ? 14 : 6)
-          .attr("height", 6)
-          .attr("rx", 3)
-          .attr("ry", 2)
+          .attr("x", r * 0.55).attr("y", -r * 0.85)
+          .attr("width", domain ? 14 : 6).attr("height", 6)
+          .attr("rx", 3).attr("ry", 2)
           .attr("fill", pillFill)
-          .attr("stroke", "var(--foreground)")
-          .attr("stroke-width", 1.2)
-          .attr("pointer-events", "none")
-          .attr("title", domain ?? "");
+          .attr("stroke", "var(--foreground)").attr("stroke-width", 1.2)
+          .attr("pointer-events", "none").attr("title", domain ?? "");
       }
 
-      // Label — flip text on the left half of the circle so it reads left→right
-      const flip = d.x > Math.PI;   // left hemisphere when angle > 180°
-      const lx = (r + 5) * (flip ? -1 : 1);
-
+      const flip = d.x > Math.PI;
+      const lx   = (r + 5) * (flip ? -1 : 1);
       el.append("text")
-        .attr("x", lx)
-        .attr("dy", "0.32em")
+        .attr("x", lx).attr("dy", "0.32em")
         .attr("text-anchor", flip ? "end" : "start")
         .attr("opacity", d.depth <= 2 ? 0.9 : 0)
         .text(() => {
@@ -402,34 +581,29 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
         });
     });
 
-    // 8. Hover interaction
+    // 8. Hover
     nodeSel
       .on("mouseenter", function (event, d) {
-        const svgEl = svgRef.current;
+        const svgEl   = svgRef.current;
         const svgRect = svgEl.getBoundingClientRect();
-        const wrapRect = wrap.getBoundingClientRect();
         const transform = d3.zoomTransform(svgEl);
 
-        // Map node Cartesian → screen position inside wrapper
         const [sx, sy] = transform.apply([d._cx, d._cy]);
         const ex = sx + svgRect.width / 2;
         const ey = sy + svgRect.height / 2;
-
         const tw = 240, th = 140;
         const tx = Math.min(Math.max(ex + 16, 8), svgRect.width - tw - 8);
         const ty = Math.min(Math.max(ey - th / 2, 8), svgRect.height - th - 8);
 
         setTooltipRef.current({ visible: true, x: tx, y: ty, node: d.data });
-
         requestSummaryRef.current?.(d.data.path ?? "");
 
-        // Scale up the node circle
         const r = nodeR(d.depth);
         d3.select(this).select("circle:first-child")
           .transition().duration(160)
           .attr("r", (d.depth === 0 ? 22 : r) * 1.5);
 
-        // Highlight ancestor chain
+        // Dim containment links not in ancestor chain
         const ancSet = new Set(getAncestors(d).map((a) => a.data.path));
         linkSelRef.current
           ?.classed("fmg-link--dim", (l) =>
@@ -438,29 +612,50 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
             ancSet.has(l.source.data.path) && ancSet.has(l.target.data.path));
         nodeSelRef.current
           ?.classed("fmg-node--dim", (n) => !ancSet.has(n.data.path));
+
+        // Highlight dep edges touching this node; dim the rest
+        if (showDepsRef.current && depSelRef.current?.size()) {
+          const p = d.data.path;
+          const touching = new Set();
+          const ebp = edgesByPathRef.current;
+          if (ebp?.has(p)) {
+            ebp.get(p).out.forEach((e) => touching.add(`${e.from}→${e.to}`));
+            ebp.get(p).in.forEach((e)  => touching.add(`${e.from}→${e.to}`));
+          }
+          depSelRef.current
+            .classed("fmg-dep-link--dim", (e) => !touching.has(`${e.from}→${e.to}`))
+            .classed("fmg-dep-link--hot", (e) =>  touching.has(`${e.from}→${e.to}`));
+          depSelRef.current
+            .attr("marker-end", (e) =>
+              touching.has(`${e.from}→${e.to}`) ? "url(#fmg-arrow-hot)" : "url(#fmg-arrow)"
+            );
+        }
       })
       .on("mouseleave", function (event, d) {
         setTooltipRef.current((t) => ({ ...t, visible: false }));
 
         d3.select(this).select("circle:first-child")
-          .transition().duration(180)
-          .attr("r", nodeR(d.depth));
+          .transition().duration(180).attr("r", nodeR(d.depth));
 
         linkSelRef.current
-          ?.classed("fmg-link--dim", false)
-          .classed("fmg-link--lit", false);
+          ?.classed("fmg-link--dim", false).classed("fmg-link--lit", false);
         nodeSelRef.current
           ?.classed("fmg-node--dim", false);
+
+        // Reset dep edges
+        if (depSelRef.current?.size()) {
+          depSelRef.current
+            .classed("fmg-dep-link--dim", false)
+            .classed("fmg-dep-link--hot", false)
+            .attr("marker-end", "url(#fmg-arrow)");
+        }
       })
-      // 9. Click — select + detail; double-click folder to focus in graph
       .on("click", function (event, d) {
         event.stopPropagation();
-
         setSelectedRef.current?.(d.data);
         const nodePath = d.data.path ?? "";
         requestSummaryRef.current?.(nodePath);
         requestDetailRef.current?.(nodePath);
-
         if (d.data.type === "folder" && d.data._collapsed) {
           d.data._collapsed = false;
           setDrawKeyRef.current((k) => k + 1);
@@ -468,9 +663,64 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
       })
       .on("dblclick", function (event, d) {
         event.stopPropagation();
+
+        // ── File node: fetch content and send to Explain Code tab ────────────
+        if (d.data.type !== "folder" && d.depth > 0) {
+          const filePath = d.data.path ?? "";
+          if (!filePath || !repoMeta?.owner) return;
+
+          // Notify DashboardShell immediately (switches tab + shows spinner)
+          onFetchingFileRef.current?.(filePath);
+          setLoadingNodePath(filePath);
+          setTooltipRef.current({ visible: false, x: 0, y: 0, node: null });
+
+          const { owner, repo, branch } = repoMeta;
+          const MAX_LINES = 1000;
+
+          fetch("/api/github/content", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ owner, repo, branch, paths: [filePath] }),
+          })
+            .then((res) => {
+              if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
+              return res.json();
+            })
+            .then((data) => {
+              const raw = data.contents?.[filePath];
+              if (raw === undefined || raw === null) {
+                throw new Error("File not found or is binary — cannot display.");
+              }
+              // Guard against suspiciously binary-looking content
+              if (raw.length > 0 && raw.slice(0, 512).includes("\0")) {
+                throw new Error("This looks like a binary file and cannot be displayed.");
+              }
+              const lines = raw.split("\n");
+              const truncated = lines.length > MAX_LINES;
+              const content   = truncated ? lines.slice(0, MAX_LINES).join("\n") : raw;
+              setLoadingNodePath(null);
+              onExplainFileRef.current?.({
+                code: content,
+                fileName: filePath,
+                error: null,
+                truncated,
+              });
+            })
+            .catch((err) => {
+              setLoadingNodePath(null);
+              onExplainFileRef.current?.({
+                code: "",
+                fileName: filePath,
+                error: err.message || "Failed to load file. Please try again.",
+                truncated: false,
+              });
+            });
+          return;
+        }
+
+        // ── Folder node: existing drill-in behaviour ───────────────────────
         if (d.data.type !== "folder" || d.depth === 0) return;
         if (d.data._collapsed) return;
-
         setFocusRef.current(d.data);
         setBreadRef.current((prev) => {
           const last = prev[prev.length - 1];
@@ -479,18 +729,16 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
         setTooltipRef.current({ visible: false, x: 0, y: 0, node: null });
       });
 
-    // 10. Fit everything into view
+    // 10. Fit
     requestAnimationFrame(() => fitView(svg, zoom, W, H));
 
-    // drawKey is intentionally included so expand/collapse triggers a redraw
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, focusNode, isDark, drawKey]);
 
-  // ── Register graph navigator so ask-bar can jump to a path ─────────────────
+  // ── Graph navigator (ask-bar) ─────────────────────────────────────────────
   useEffect(() => {
     if (!registerGraphNavigator) return;
     const unregister = registerGraphNavigator(async (targetPath) => {
-      // Find the matching data node recursively in the working tree
       const treeRoot = treeRef.current;
       if (!treeRoot) return;
 
@@ -508,54 +756,40 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
       const match = findNode(treeRoot, targetPath);
       if (!match) return;
 
-      // Un-collapse ancestors so the node is visible
       function uncollapsePath(node, path) {
         if (node.path === path) return true;
         if (node.children) {
           for (const c of node.children) {
-            if (uncollapsePath(c, path)) {
-              node._collapsed = false;
-              return true;
-            }
+            if (uncollapsePath(c, path)) { node._collapsed = false; return true; }
           }
         }
         return false;
       }
       uncollapsePath(treeRoot, targetPath);
 
-      // Select the node in React state → opens detail panel
       setSelectedRef.current?.(match);
       requestSummaryRef.current?.(targetPath);
       requestDetailRef.current?.(targetPath);
-
-      // Trigger a redraw so uncollapsed nodes appear
       setDrawKeyRef.current?.((k) => k + 1);
 
-      // After redraw, fly the camera to the node
       setTimeout(() => {
         const sel = nodeSelRef.current;
         if (!sel) return;
         let targetD3Node = null;
-        sel.each((d) => {
-          if (d.data.path === targetPath) targetD3Node = d;
-        });
+        sel.each((d) => { if (d.data.path === targetPath) targetD3Node = d; });
         if (!targetD3Node || !svgRef.current || !wrapRef.current) return;
 
-        const wrap = wrapRef.current;
-        const W = wrap.clientWidth || 800;
-        const H = CANVAS_H;
+        const wrap  = wrapRef.current;
+        const W     = wrap.clientWidth || 800;
+        const H     = CANVAS_H;
         const scale = 1.8;
         const tx = -targetD3Node._cx * scale;
         const ty = -targetD3Node._cy * scale;
 
         d3.select(svgRef.current)
           .transition().duration(700)
-          .call(
-            zoomRef.current.transform,
-            d3.zoomIdentity.translate(tx, ty).scale(scale)
-          );
+          .call(zoomRef.current.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 
-        // Pulse the selected circle briefly
         sel.classed("fmg-node--selected", (n) => n.data.path === targetPath);
       }, 120);
     });
@@ -563,27 +797,19 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerGraphNavigator]);
 
-  // ── Breadcrumb navigation ─────────────────────────────────────────────────
+  // ── Breadcrumb nav ────────────────────────────────────────────────────────
   function navigateTo(idx) {
-    if (idx < 0) {
-      setBreadcrumb([]);
-      setFocusNode(null);
-    } else {
-      setBreadcrumb((prev) => prev.slice(0, idx + 1));
-      setFocusNode(breadcrumb[idx]);
-    }
+    if (idx < 0) { setBreadcrumb([]); setFocusNode(null); }
+    else { setBreadcrumb((prev) => prev.slice(0, idx + 1)); setFocusNode(breadcrumb[idx]); }
     setTooltip({ visible: false, x: 0, y: 0, node: null });
   }
 
-  // ── Reset view button ─────────────────────────────────────────────────────
+  // ── Reset view ────────────────────────────────────────────────────────────
   function handleReset() {
-    setBreadcrumb([]);
-    setFocusNode(null);
-    setSelectedNode(null);
+    setBreadcrumb([]); setFocusNode(null); setSelectedNode(null);
     setTooltip({ visible: false, x: 0, y: 0, node: null });
     if (svgRef.current && zoomRef.current) {
-      d3.select(svgRef.current)
-        .transition().duration(480)
+      d3.select(svgRef.current).transition().duration(480)
         .call(zoomRef.current.transform, d3.zoomIdentity);
     }
   }
@@ -602,7 +828,9 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
     setDrawKey((k) => k + 1);
   }
 
-  const repoLabel = repoMeta?.fullName ?? repoMeta?.repo ?? "repo";
+  const repoLabel    = repoMeta?.fullName ?? repoMeta?.repo ?? "repo";
+  const hasDepData   = depStatus === "done" && edges.length > 0;
+  const depLoading   = depStatus === "loading";
 
   return (
     <div className="file-map-stack">
@@ -636,7 +864,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
 
         <svg ref={svgRef} className="fmg-svg" style={{ cursor: "grab" }} aria-hidden="true" />
 
-        {/* Tooltip — React-managed, absolutely positioned inside wrapper */}
+        {/* Node hover tooltip */}
         <div
           role="tooltip"
           aria-hidden={!tooltip.visible}
@@ -651,7 +879,62 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
                 {getDescriptionForPath(tooltip.node.path ?? "")}
               </p>
               <p className="fmg-tooltip__path">{tooltip.node.path || repoLabel}</p>
+              {/* Subtle double-click hint — only for file nodes */}
+              {tooltip.node.type !== "folder" && (
+                <span className="fmg-tooltip__dblclick-hint">
+                  Double-click to explain
+                </span>
+              )}
             </>
+          )}
+        </div>
+
+        {/* Dep-edge hover tooltip */}
+        <div
+          role="tooltip"
+          aria-hidden={!edgeTooltip.visible}
+          className={`fmg-dep-tooltip ${edgeTooltip.visible ? "fmg-dep-tooltip--visible" : "fmg-dep-tooltip--hidden"}`}
+          style={{ left: edgeTooltip.x, top: edgeTooltip.y }}
+        >
+          {edgeTooltip.visible && (
+            <>
+              <span className="fmg-dep-tooltip__pill">imports</span>
+              <span className="fmg-dep-tooltip__text">
+                <strong>{edgeTooltip.from}</strong>
+                {" → "}
+                <strong>{edgeTooltip.to}</strong>
+              </span>
+            </>
+          )}
+        </div>
+
+        {/* Dep toggle + loading indicator */}
+        <div className="fmg-dep-controls">
+          {depLoading && (
+            <span className="fmg-dep-loading" aria-label="Parsing dependencies…">
+              <Loader2 size={11} className="fmg-dep-loading__icon" />
+              <span>Parsing deps…</span>
+            </span>
+          )}
+          {(hasDepData || depLoading) && (
+            <label className="fmg-dep-toggle" title="Show / hide import dependency edges">
+              <input
+                type="checkbox"
+                checked={showDeps}
+                onChange={(e) => setShowDeps(e.target.checked)}
+                aria-label="Show dependency edges"
+              />
+              <span className="fmg-dep-toggle__track">
+                <span className="fmg-dep-toggle__thumb" />
+              </span>
+              <span className="fmg-dep-toggle__label">
+                <GitMerge size={11} aria-hidden="true" />
+                Deps
+                {hasDepData && (
+                  <span className="fmg-dep-toggle__count">{edges.length}</span>
+                )}
+              </span>
+            </label>
           )}
         </div>
 
@@ -670,7 +953,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark }) {
   );
 }
 
-// ─── Module-level D3 helpers ──────────────────────────────────────────────────
+// ─── Module-level helpers ─────────────────────────────────────────────────────
 
 function fitView(svg, zoom, W, H) {
   const g = svg.select(".fmg-g");
@@ -683,5 +966,5 @@ function fitView(svg, zoom, W, H) {
     const ty = -scale * (b.y + b.height / 2);
     svg.transition().duration(700)
       .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
-  } catch (_) { /* getBBox unavailable — skip */ }
+  } catch (_) { /* getBBox unavailable */ }
 }

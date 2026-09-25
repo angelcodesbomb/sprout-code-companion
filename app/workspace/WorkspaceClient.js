@@ -5,6 +5,7 @@ import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { parseGithubTree } from "@/lib/parseGithubTree";
 import { buildRepoMap } from "@/lib/repoMap";
 import { useRepoMapSummarize } from "@/hooks/useRepoMapSummarize";
+import { useRepoDependencies } from "@/hooks/useRepoDependencies";
 import { RepoMapProvider } from "@/context/RepoMapContext";
 
 // ── Static mock data (agents + code explainer) ────────────────────────────────
@@ -83,6 +84,12 @@ export default function WorkspaceClient() {
     getWorkflowForPath,
   } = useRepoMapSummarize(repoMap, setRepoMap);
 
+  const {
+    edges: depEdges,
+    edgesByPath: depEdgesByPath,
+    status: depStatus,
+  } = useRepoDependencies(repoMeta, repoMap);
+
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
     return () => document.documentElement.classList.remove("dark");
@@ -134,6 +141,9 @@ export default function WorkspaceClient() {
         onThemeToggle={() => setIsDark((v) => !v)}
         onRepoLoad={handleRepoLoad}
         onLoadStart={handleLoadStart}
+        depEdges={depEdges}
+        depEdgesByPath={depEdgesByPath}
+        depStatus={depStatus}
       />
     </RepoMapProvider>
   );
