@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { getSession } from "@/lib/auth";
 
 /**
  * GET /api/github/tree?owner=x&repo=y
@@ -25,7 +25,7 @@ export async function GET(request) {
   // 1. The signed-in user's OAuth token (has private repo access)
   // 2. A server-side personal access token (public repos, higher rate limit)
   // 3. Unauthenticated (60 req/hr)
-  const session = await auth();
+  const session = await getSession();
   const token = session?.accessToken ?? process.env.GITHUB_TOKEN ?? null;
 
   const headers = {

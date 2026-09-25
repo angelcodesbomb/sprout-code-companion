@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Code2, GitBranch, Search, Settings, LogIn, LogOut } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useSession, signIn, signOut } from "next-auth/react";
+import { useSession, signIn, signOut } from "@/hooks/useSession";
 import { SproutMark } from "../shared/SproutMark";
 import { ThemeToggle } from "../shared/ThemeToggle";
 import { AgentSidebar } from "../agents/AgentSidebar";
