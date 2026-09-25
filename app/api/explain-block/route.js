@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
-const XAI_URL = "https://api.x.ai/v1/chat/completions";
-const MODEL = process.env.XAI_MODEL || "grok-3-mini";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
 export async function POST(request) {
     let body;
@@ -11,10 +11,10 @@ export async function POST(request) {
     const { snippet } = body ?? {};
     if (!snippet?.trim()) return NextResponse.json({ error: "Missing snippet" }, { status: 400 });
 
-    const apiKey = process.env.XAI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
         return NextResponse.json({
-            explanation: "No AI key found. Add XAI_API_KEY to your .env.local to get live explanations.",
+            explanation: "No AI key found. Add GROQ_API_KEY to your .env.local to get live explanations.",
         });
     }
 
@@ -23,7 +23,7 @@ Write 2-4 clear sentences describing what the selected code does.
 No markdown, no bullet points — just clean readable prose.`;
 
     try {
-        const res = await fetch(XAI_URL, {
+        const res = await fetch(GROQ_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -44,8 +44,22 @@ No markdown, no bullet points — just clean readable prose.`;
 
         if (!res.ok) {
             console.error("explain-block: API error", res.status, rawText);
+            
+            // Handle specific error cases gracefully
+            let errorMessage = `AI returned an error (${res.status}).`;
+            
+            try {
+                const errorData = JSON.parse(rawText);
+                if (errorData.error?.message?.includes('rate limit') || errorData.error?.includes('quota')) {
+                    errorMessage = `Groq API rate limit or quota exceeded. Check your Groq account limits.`;
+                } else if (errorData.error) {
+                    errorMessage = `AI error: ${errorData.error.message || errorData.error}`;
+                }
+            } catch {}
+            
             return NextResponse.json({
-                explanation: `AI returned an error (${res.status}). Check that your XAI_API_KEY is valid.`,
+                explanation: errorMessage,
+                needsCredits: res.status === 403
             });
         }
 
