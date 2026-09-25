@@ -760,6 +760,7 @@ button {
 .agent-sidebar {
   border-right: 2px solid var(--border);
   padding: 24px 13px;
+  overflow-anchor: none;
 }
 
 .agent-sidebar__label {
@@ -836,6 +837,11 @@ button {
 
 .status-dot.is-active {
   background: var(--coral);
+}
+
+.status-dot.is-live {
+  background: var(--mint);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--mint) 40%, var(--foreground));
 }
 
 .agent-card__name {
@@ -3113,4 +3119,178 @@ button {
   width: calc(100% - 16px);
   margin: 10px 8px;
   border-top: 1.5px dashed var(--border);
+}
+
+/* ── Orchestrator sidebar panel ──────────────────────────────────────────── */
+.orch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+
+.orch-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.orch-panel__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 8px var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.orch-panel__status--running {
+  color: var(--coral);
+}
+
+.orch-panel__status--done {
+  color: var(--mint);
+}
+
+.orch-panel__status--error {
+  color: var(--coral);
+}
+
+.orch-panel__spinner {
+  animation: orch-spin 0.9s linear infinite;
+}
+
+@keyframes orch-spin {
+  to { transform: rotate(360deg); }
+}
+
+.orch-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orch-panel__input {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  border: 1.5px solid var(--border);
+  border-radius: 9px 5px 10px 6px;
+  background: var(--card);
+  color: var(--foreground);
+  font: 400 11px/1.45 var(--font-sans);
+  padding: 8px 9px;
+  outline: none;
+  box-shadow: 1px 2px 0 color-mix(in oklab, var(--foreground) 8%, transparent);
+  transition: border-color 150ms ease;
+}
+
+.orch-panel__input:focus {
+  border-color: var(--coral);
+}
+
+.orch-panel__input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.orch-panel__input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.orch-panel__run {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 30px;
+  border: 1.5px solid var(--foreground);
+  border-radius: 8px 5px 9px 5px;
+  background: var(--coral);
+  color: oklch(0.254 0.018 75);
+  font: 700 10px var(--font-sans);
+  cursor: pointer;
+  box-shadow: 1px 2px 0 color-mix(in oklab, var(--foreground) 14%, transparent);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.orch-panel__run:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: var(--mint);
+}
+
+.orch-panel__run:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.orch-panel__active-tool {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 5px 7px;
+  font: 400 10px var(--font-mono);
+  color: var(--muted-foreground);
+  background: color-mix(in oklab, var(--coral) 10%, var(--card));
+  border: 1px solid color-mix(in oklab, var(--coral) 30%, var(--border));
+  border-radius: 6px 4px 7px 4px;
+}
+
+.orch-panel__active-tool code {
+  font: 600 10px var(--font-mono);
+  color: var(--foreground);
+}
+
+.orch-panel__timeline {
+  margin-top: 2px;
+}
+
+.orch-panel__steps {
+  height: 176px;
+  max-height: 176px;
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  margin-top: 0;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+
+.orch-panel__steps .agent-card--timeline {
+  pointer-events: none;
+  min-height: 52px;
+  cursor: default;
+}
+
+.orch-panel__steps .agent-card--timeline.is-live {
+  border-color: color-mix(in oklab, var(--mint) 55%, var(--border));
+  background: color-mix(in oklab, var(--mint) 8%, var(--card));
+}
+
+.orch-panel__result {
+  padding: 6px 7px;
+  background: color-mix(in oklab, var(--mint) 12%, var(--card));
+  border: 1.5px solid color-mix(in oklab, var(--mint) 35%, var(--border));
+  border-radius: 8px 5px 9px 5px;
+}
+
+.orch-panel__result p {
+  margin: 4px 0 0;
+  font: 400 10px/1.5 var(--font-sans);
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.orch-panel__error {
+  margin: 0;
+  padding: 6px 7px;
+  font: 400 10px var(--font-sans);
+  color: var(--coral);
+  background: color-mix(in oklab, var(--coral) 8%, var(--card));
+  border: 1.5px solid color-mix(in oklab, var(--coral) 35%, var(--border));
+  border-radius: 8px 5px 9px 5px;
 }

@@ -28,7 +28,6 @@ import { CodeExplainer } from "../editor/CodeExplainer";
  *   onLoadStart     — () => void                 forwarded to RepoInput       ★ new
  */
 export function DashboardShell({
-  agents,
   files,
   repoMeta,
   isLoadingFiles,
@@ -40,6 +39,12 @@ export function DashboardShell({
   depEdges,
   depEdgesByPath,
   depStatus,
+  orchStatus,
+  orchSteps,
+  orchCurrentTool,
+  orchFinalAnswer,
+  orchError,
+  onOrchestratorRun,
 }) {
   const [view, setView] = useState("map");
   const [activeAgent, setActiveAgent] = useState(null);
@@ -154,11 +159,16 @@ export function DashboardShell({
 
       <div className="dashboard-body">
         <AgentSidebar
-          agents={agents}
           activeAgent={activeAgent}
           onAgentSelect={setActiveAgent}
           activeView={view}
           onViewSelect={setView}
+          orchStatus={orchStatus}
+          orchSteps={orchSteps}
+          orchCurrentTool={orchCurrentTool}
+          orchFinalAnswer={orchFinalAnswer}
+          orchError={orchError}
+          onOrchestratorRun={onOrchestratorRun}
         />
 
         <div className="dashboard-main">
