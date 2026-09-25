@@ -1,31 +1,22 @@
-import NextAuth from "next-auth";
-import GitHub from "next-auth/providers/github";
+import { getIronSession } from "iron-session";
+import { cookies } from "next/headers";
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  providers: [
-    GitHub({
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      // Request repo scope so we can read private repos
-      authorization: {
-        params: {
-          scope: "read:user user:email repo",
-        },
-      },
-    }),
-  ],
-  callbacks: {
-    // Persist the OAuth access token on the JWT so the proxy route can use it
-    async jwt({ token, account }) {
-      if (account?.access_token) {
-        token.accessToken = account.access_token;
-      }
-      return token;
-    },
-    // Expose the access token to the client session (only what's needed)
-    async session({ session, token }) {
-      session.accessToken = token.accessToken;
-      return session;
-    },
+export const SESSION_OPTIONS = {
+  password: process.env.AUTH_SECRET ?? "fallback-dev-secret-change-in-production",
+  cookieName: "sprout_session",
+  cookieOptions: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
   },
-});
+};
+
+/**
+ * Read the current iron-session from the request cookies.
+ * Shape: { accessToken, user: { name, login, avatarUrl } } | {}
+ */
+export async function getSession() {
+  const cookieStore = await cookies();
+  return getIronSession(cookieStore, SESSION_OPTIONS);
+}

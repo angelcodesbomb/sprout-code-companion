@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { ArrowRight, AlertCircle, History, Github, Lock } from "lucide-react";
-import { useSession, signIn } from "next-auth/react";
+import { useSession, signIn } from "@/hooks/useSession";
 import { useRecentRepos } from "@/hooks/useRecentRepos";
 
 /**
