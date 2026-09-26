@@ -1,5 +1,5 @@
 /**
- * Orchestrator Loop — coordinates agent tools for production-site builds.
+ * Orchestrator Loop
  */
 
 import { callGroqWithTools, getModel } from "./groq.js";
@@ -8,93 +8,106 @@ import { assertToolResult } from "./validate.js";
 import { createRunContext, serializeContext } from "./context.js";
 import { buildOrchestratorSystemPrompt } from "./prompt.js";
 
-/** Maximum tool calls before the loop is force-stopped. */
-const MAX_STEPS = 24;
+const MAX_STEPS = 12; // lower cap — saves tokens and avoids runaway loops
 
-const CODEGEN_TOOLS = new Set(["ui_agent_generate", "api_agent_generate"]);
-const REVIEW_TOOLS = new Set(["monitor_review_output", "security_review_output"]);
+const CODEGEN_TOOLS  = new Set(["ui_agent_generate", "api_agent_generate", "db_agent_design_schema"]);
+const REVIEW_TOOLS   = new Set(["monitor_review_output", "security_review_output"]);
+
+// How many non-system messages to keep in the sliding window.
+// System message is always kept. This caps context to ~4000 tokens of history.
+const MAX_HISTORY_MESSAGES = 8;
 
 function isQwenStyleModel() {
   const m = getModel().toLowerCase();
   return m.startsWith("qwen/") || m.startsWith("qwen");
 }
 
+function securityGate(decision) { void decision; return { pass: true }; }
+function monitorGate(step)      { void step;     return { pass: true }; }
+
 /**
- * Pre-execution gate (orchestrator-level policy before calling an agent tool).
+ * Strip file content from a tool result before storing in message history.
+ * File content can be thousands of tokens — the model doesn't need it after the step.
+ * The orchestrator only needs to see: ok, artifactId, summary, paths.
  */
-function securityGate(decision) {
-  void decision;
-  return { pass: true };
+function compressToolResult(result, toolName) {
+  if (!result?.output) return result;
+
+  const out = result.output;
+
+  // Codegen tools: strip the file content arrays, keep only metadata
+  if (CODEGEN_TOOLS.has(toolName) && out.artifact) {
+    return {
+      ...result,
+      output: {
+        artifactId: out.artifactId,
+        summary:    out.artifact?.summary ?? "",
+        paths:      out.artifact?.paths   ?? [],
+        agent:      out.artifact?.agent   ?? "",
+      },
+    };
+  }
+
+  // github_read_repo: strip samplePaths which can be large
+  if (toolName === "github_read_repo" && out.samplePaths) {
+    const { samplePaths: _, ...rest } = out;
+    return { ...result, output: rest };
+  }
+
+  return result;
 }
 
 /**
- * Post-execution gate — stub; real Monitor agent hooks in via monitor_review_output tool.
+ * Trim the non-system messages to MAX_HISTORY_MESSAGES (sliding window).
+ * Always keeps: [system, original_user_goal, ...last N messages]
  */
-function monitorGate(step) {
-  void step;
-  return { pass: true };
+function trimMessages(messages) {
+  if (messages.length <= MAX_HISTORY_MESSAGES + 2) return messages;
+  const system   = messages[0];
+  const userGoal = messages[1];
+  const rest     = messages.slice(2);
+  const trimmed  = rest.slice(-MAX_HISTORY_MESSAGES);
+  return [system, userGoal, ...trimmed];
 }
 
-/**
- * @typedef {{
- *   step: number,
- *   toolName: string,
- *   toolInput: object,
- *   result: import("./validate.js").ToolResult,
- *   timestamp: string,
- *   agent?: string,
- * }} Step
- */
-
-/**
- * @param {{
- *   goal: string,
- *   mapSnapshot?: object | null,
- *   autoApproveHuman?: boolean,
- *   onToolStart?: (toolName: string) => void,
- *   onStepComplete?: (step: Step) => void,
- * }} options
- * @returns {Promise<{ steps: Step[], finalAnswer: string, context: object }>}
- */
 export async function runOrchestrator({
   goal,
-  mapSnapshot = null,
-  githubToken = null,
+  mapSnapshot      = null,
+  githubToken      = null,
   autoApproveHuman = false,
   onToolStart,
   onStepComplete,
 }) {
-  const ctx = createRunContext({ goal, mapSnapshot, githubToken, autoApproveHuman });
+  const ctx   = createRunContext({ goal, mapSnapshot, githubToken, autoApproveHuman });
   const tools = createOrchestratorTools(ctx);
 
-  /** @type {Array<object>} */
-  const messages = [
+  let messages = [
     { role: "system", content: buildOrchestratorSystemPrompt(ctx) },
-    { role: "user", content: goal },
+    { role: "user",   content: goal },
   ];
 
-  /** @type {Step[]} */
   const steps = [];
 
   for (let stepNum = 1; stepNum <= MAX_STEPS; stepNum++) {
+    // Refresh system prompt each step so state changes (phase, repo, map) are visible
+    messages[0] = { role: "system", content: buildOrchestratorSystemPrompt(ctx) };
+
+    // Trim history before every Groq call
+    messages = trimMessages(messages);
+
     const decision = await callGroqWithTools(messages, tools);
 
     if (decision.done) {
-      return {
-        steps,
-        finalAnswer: decision.content,
-        context: serializeContext(ctx),
-      };
+      return { steps, finalAnswer: decision.content, context: serializeContext(ctx) };
     }
 
     const { toolName, toolInput } = decision;
 
     const secResult = securityGate({ toolName, toolInput });
     if (!secResult.pass) {
-      const reason = secResult.reason ?? "blocked by security gate";
       return {
         steps,
-        finalAnswer: `Orchestrator halted: ${reason}`,
+        finalAnswer: `Orchestrator halted: ${secResult.reason ?? "security gate"}`,
         context: serializeContext(ctx),
       };
     }
@@ -108,142 +121,123 @@ export async function runOrchestrator({
       };
     }
 
-    if (typeof onToolStart === "function") {
-      onToolStart(toolName);
-    }
+    if (typeof onToolStart === "function") onToolStart(toolName);
 
-    const raw = await tool.run(toolInput ?? {});
+    const raw    = await tool.run(toolInput ?? {});
     const result = assertToolResult(raw, toolName);
 
-    /** @type {Step} */
     const step = {
-      step: stepNum,
+      step:      stepNum,
       toolName,
       toolInput: toolInput ?? {},
       result,
       timestamp: new Date().toISOString(),
-      agent: toolNameToAgentLabel(toolName),
+      agent:     toolNameToAgentLabel(toolName),
     };
     steps.push(step);
 
     console.log(
       `[orchestrator/loop] Step ${stepNum}: ${toolName}`,
-      JSON.stringify(toolInput),
-      "→",
-      result.ok ? "ok" : `error: ${result.error}`
+      "→", result.ok ? "ok" : `error: ${result.error}`
     );
 
-    if (typeof onStepComplete === "function") {
-      onStepComplete(step);
-    }
+    if (typeof onStepComplete === "function") onStepComplete(step);
 
     const monResult = monitorGate({ toolName, toolInput, result });
     if (!monResult.pass) {
-      const reason = monResult.reason ?? "blocked by monitor gate";
       return {
         steps,
-        finalAnswer: `Orchestrator halted: ${reason}`,
+        finalAnswer: `Orchestrator halted: ${monResult.reason ?? "monitor gate"}`,
         context: serializeContext(ctx),
       };
     }
 
+    // Compress result BEFORE pushing to message history
+    const compressed = compressToolResult(result, toolName);
+
     if (
       REVIEW_TOOLS.has(toolName) &&
       result.ok &&
-      result.output &&
-      result.output.pass === false
+      result.output?.pass === false
     ) {
       messages.push(
         assistantToolMessage(stepNum, toolName, toolInput),
-        toolResultMessage(stepNum, result)
+        toolResultMessage(stepNum, compressed)
       );
       messages.push({
-        role: "user",
-        content:
-          `Review failed for artifact ${result.output.artifactId}. ` +
-          `Feedback: ${result.output.feedback ?? result.output.note ?? "Fix issues and regenerate."} ` +
-          `Re-run the appropriate codegen tool, then monitor and security again.`,
+        role:    "user",
+        content: `Review failed (${toolName}). Feedback: ${result.output.feedback ?? "fix issues and regenerate."}`,
       });
       continue;
     }
 
     messages.push(
       assistantToolMessage(stepNum, toolName, toolInput),
-      toolResultMessage(stepNum, result)
+      toolResultMessage(stepNum, compressed)
     );
 
-    // For Qwen (system-prompt tool calling), replace the standard tool message pair
-    // with a plain assistant/user exchange that Qwen reads correctly.
-    // We already pushed the OpenAI-format messages above for non-Qwen models —
-    // for Qwen we swap the last two messages out.
     if (isQwenStyleModel()) {
-      // Remove the last two messages (assistantToolMessage + toolResultMessage)
       messages.splice(messages.length - 2, 2);
-      // Add a Qwen-readable pair instead
       messages.push(
         {
-          role: "assistant",
+          role:    "assistant",
           content: JSON.stringify({ name: toolName, arguments: toolInput ?? {} }),
         },
         {
-          role: "user",
+          role:    "user",
           content: result.ok
-            ? `Tool result: ${JSON.stringify(result.output)}\n\nContinue with the next pipeline step.`
-            : `Tool "${toolName}" returned an error: ${result.error}\n\nDecide how to proceed.`,
+            ? `Result: ${JSON.stringify(compressed.output ?? {})} — continue.`
+            : `Error in ${toolName}: ${result.error} — decide how to proceed.`,
         }
       );
     }
 
     if (CODEGEN_TOOLS.has(toolName) && result.ok) {
       messages.push({
-        role: "user",
-        content:
-          `Codegen step completed (artifactId: ${result.output?.artifactId}). ` +
-          `You MUST call monitor_review_output then security_review_output for this artifact before push or finishing.`,
+        role:    "user",
+        content: `Codegen done (artifactId: ${result.output?.artifactId}). Call monitor_review_output then security_review_output.`,
       });
     }
   }
 
   return {
     steps,
-    finalAnswer: `Orchestrator reached the maximum step limit (${MAX_STEPS}) without completing.`,
+    finalAnswer: `Reached max steps (${MAX_STEPS}).`,
     context: serializeContext(ctx),
   };
 }
 
 function toolNameToAgentLabel(toolName) {
-  if (toolName.startsWith("github_")) return "GitHub";
-  if (toolName.startsWith("map_parser")) return "Map Parser";
-  if (toolName.startsWith("db_agent")) return "Database";
-  if (toolName.startsWith("ui_agent")) return "UI";
-  if (toolName.startsWith("api_agent")) return "API";
-  if (toolName.startsWith("monitor_")) return "Monitor";
-  if (toolName.startsWith("security_")) return "Security";
-  if (toolName.startsWith("live_preview")) return "Live Preview";
+  if (toolName.startsWith("github_"))       return "GitHub";
+  if (toolName.startsWith("map_parser"))    return "Map Parser";
+  if (toolName.startsWith("db_agent"))      return "Database";
+  if (toolName.startsWith("ui_agent"))      return "UI";
+  if (toolName.startsWith("api_agent"))     return "API";
+  if (toolName.startsWith("monitor_"))      return "Monitor";
+  if (toolName.startsWith("security_"))     return "Security";
+  if (toolName.startsWith("live_preview"))  return "Live Preview";
   return "Orchestrator";
 }
 
 function assistantToolMessage(stepNum, toolName, toolInput) {
   return {
-    role: "assistant",
+    role:    "assistant",
     content: null,
-    tool_calls: [
-      {
-        id: `call_${stepNum}`,
-        type: "function",
-        function: {
-          name: toolName,
-          arguments: JSON.stringify(toolInput ?? {}),
-        },
+    tool_calls: [{
+      id:   `call_${stepNum}`,
+      type: "function",
+      function: {
+        name:      toolName,
+        arguments: JSON.stringify(toolInput ?? {}),
       },
-    ],
+    }],
   };
 }
 
 function toolResultMessage(stepNum, result) {
   return {
-    role: "tool",
+    role:         "tool",
     tool_call_id: `call_${stepNum}`,
-    content: JSON.stringify(result),
+    content:      JSON.stringify(result),
   };
 }

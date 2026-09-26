@@ -30,162 +30,107 @@ export function createOrchestratorTools(ctx) {
   return [
     {
       name: "github_read_repo",
-      description:
-        "GitHub Agent: read an existing GitHub repository's file tree and load it as the repo map context. " +
-        "Call this at the start of a run when the user provides an existing repo (owner/repo). " +
-        "Populates ctx with the file map so downstream agents have full repo context.",
+      description: "Load an existing GitHub repo's file tree into map context.",
       parameters: {
-        owner: { type: "string", description: "GitHub username or org, e.g. vercel." },
-        repo: { type: "string", description: "Repository name, e.g. next.js." },
-        fetchContent: {
-          type: "boolean",
-          description:
-            "Whether to also fetch a sample of file contents for richer context. Defaults to true.",
-        },
+        owner: { type: "string", description: "GitHub username or org." },
+        repo:  { type: "string", description: "Repository name." },
       },
       required: ["owner", "repo"],
       run: (input) => runGithubReadRepo(ctx, input),
     },
     {
       name: "github_propose_init_repo",
-      description:
-        "GitHub Agent: propose creating a new GitHub repository for the project. " +
-        "Actually calls the GitHub API to create the repo when approved. " +
-        "Requires human approval before creation unless autoApproveHuman is on.",
+      description: "Create a new GitHub repository (auto-executes when auto-approve is on).",
       parameters: {
-        repoName: { type: "string", description: "Repository name (e.g. my-saas-app)." },
-        description: { type: "string", description: "Short repo description." },
-        private: {
-          type: "boolean",
-          description: "Whether to create a private repo. Defaults to false.",
-        },
+        repoName:    { type: "string", description: "Repo name." },
+        description: { type: "string", description: "Short description." },
+        private:     { type: "boolean", description: "Private repo? Default false." },
       },
       required: ["repoName"],
       run: (input) => runGithubProposeInit(ctx, input),
     },
     {
       name: "github_confirm_human_action",
-      description:
-        "Apply human approval or rejection for a pending GitHub action (init repo or push). " +
-        "On approval, the GitHub API call is executed immediately (create repo or commit + push).",
+      description: "Approve or reject a pending GitHub action (init or push).",
       parameters: {
-        actionId: { type: "string", description: "Id from a propose_* tool output." },
-        approved: { type: "boolean", description: "True if the human approved." },
+        actionId: { type: "string", description: "Id from a propose_* tool." },
+        approved: { type: "boolean", description: "True to approve." },
       },
       required: ["actionId", "approved"],
       run: (input) => runGithubConfirmHuman(ctx, input),
     },
     {
       name: "map_parser_load_cache",
-      description:
-        "Map Parser: load cached repo map JSON as orchestrator context (no live GitHub fetch).",
-      parameters: {
-        source: {
-          type: "string",
-          description: "Label for the cache source, e.g. workspace or session.",
-        },
-      },
+      description: "Activate the loaded repo map for agent context.",
+      parameters: {},
       required: [],
       run: (input) => stubMapParserLoad(ctx, input),
     },
     {
       name: "map_parser_refresh",
-      description:
-        "Map Parser: re-build file tree and dependency graph after the repo changed (e.g. after push).",
+      description: "Re-parse the repo file tree after a push.",
       parameters: {},
       required: [],
       run: () => stubMapParserRefresh(ctx),
     },
     {
       name: "db_agent_design_schema",
-      description:
-        "Database Agent: design a local JSON-backed data schema for the project and generate " +
-        "db/schema.json (schema definition), db/seed.json (realistic seed data), and lib/db.js " +
-        "(zero-dependency in-memory CRUD store). Call this before ui_agent_generate when the " +
-        "project needs persistent data (users, posts, products, orders, etc.). " +
-        "Also generates lib/db.types.ts for TypeScript projects.",
+      description: "Generate db/schema.json, db/seed.json, and lib/db.js for local data storage.",
       parameters: {
-        task: {
-          type: "string",
-          description:
-            "What data the project needs, e.g. 'a blog with posts, authors, and comments'.",
-        },
-        spec: {
-          type: "string",
-          description: "Optional extra requirements, e.g. specific fields or relations.",
-        },
+        task: { type: "string", description: "What data the app needs." },
+        spec: { type: "string", description: "Optional extra requirements." },
       },
       required: ["task"],
       run: (input) => runDbAgent(ctx, input),
     },
     {
       name: "ui_agent_generate",
-      description:
-        "UI Agent: generate or update front-end code (components, pages, styles) for the given task.",
+      description: "Generate or update front-end components, pages, and styles.",
       parameters: {
-        task: { type: "string", description: "What to build or change in the UI." },
-        targetPaths: {
-          type: "string",
-          description: "Comma-separated file paths from the map to create or edit.",
-        },
-        spec: { type: "string", description: "Optional extra requirements." },
+        task:        { type: "string", description: "What to build in the UI." },
+        targetPaths: { type: "string", description: "Comma-separated file paths to create or edit." },
+        spec:        { type: "string", description: "Optional extra requirements." },
       },
       required: ["task"],
       run: (input) => {
         const paths = input.targetPaths
-          ? String(input.targetPaths)
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
+          ? String(input.targetPaths).split(",").map((s) => s.trim()).filter(Boolean)
           : [];
         return runUiAgent(ctx, { ...input, targetPaths: paths });
       },
     },
     {
       name: "api_agent_generate",
-      description:
-        "API Agent: generate or update server routes, handlers, and API contracts.",
+      description: "Generate or update server routes and API handlers.",
       parameters: {
-        task: { type: "string", description: "What to build or change in the API layer." },
-        routes: {
-          type: "string",
-          description: "Comma-separated route paths or file paths to create or edit.",
-        },
-        spec: { type: "string", description: "Optional extra requirements." },
+        task:   { type: "string", description: "What to build in the API." },
+        routes: { type: "string", description: "Comma-separated route paths." },
+        spec:   { type: "string", description: "Optional extra requirements." },
       },
       required: ["task"],
       run: (input) => {
         const routes = input.routes
-          ? String(input.routes)
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
+          ? String(input.routes).split(",").map((s) => s.trim()).filter(Boolean)
           : [];
         return stubCodegenAgent(ctx, "API", { ...input, routes });
       },
     },
     {
       name: "monitor_review_output",
-      description:
-        "Monitor Agent: review a codegen artifact (best practices, token efficiency, loops vs functions). Returns pass or feedback to redo.",
+      description: "Review a codegen artifact for best practices. Returns pass or feedback.",
       parameters: {
-        artifactId: { type: "string", description: "Artifact id from ui_agent_generate or api_agent_generate." },
-        forceFail: {
-          type: "string",
-          description: "Testing only: set to 'true' to simulate a failed review.",
-        },
+        artifactId: { type: "string", description: "Artifact id from codegen tool." },
+        forceFail:  { type: "string", description: "Set 'true' to simulate failure (testing only)." },
       },
       required: ["artifactId"],
-      run: (input) =>
-        stubMonitorReview(ctx, {
-          artifactId: input.artifactId,
-          forceFail: input.forceFail === "true" || input.forceFail === true,
-        }),
+      run: (input) => stubMonitorReview(ctx, {
+        artifactId: input.artifactId,
+        forceFail: input.forceFail === "true" || input.forceFail === true,
+      }),
     },
     {
       name: "security_review_output",
-      description:
-        "Security Agent: review code that passed Monitor for security issues before push.",
+      description: "Security-review a codegen artifact before push.",
       parameters: {
         artifactId: { type: "string", description: "Artifact id to review." },
       },
@@ -194,33 +139,22 @@ export function createOrchestratorTools(ctx) {
     },
     {
       name: "live_preview_sync",
-      description:
-        "Live Preview: refresh the running preview with the latest generated artifacts.",
+      description: "Refresh the live preview with latest generated artifacts.",
       parameters: {},
       required: [],
       run: () => stubLivePreviewSync(ctx),
     },
     {
       name: "github_propose_push",
-      description:
-        "GitHub Agent: propose pushing all generated artifact files to the remote repo as a single commit. " +
-        "Actually calls the GitHub Git Data API (blob → tree → commit → ref update) when approved. " +
-        "Only call this after monitor_review_output and security_review_output have both passed.",
+      description: "Commit and push all artifact files to GitHub (call only after monitor + security pass).",
       parameters: {
         commitMessage: { type: "string", description: "Git commit message." },
-        files: {
-          type: "string",
-          description:
-            "Optional comma-separated file paths to include; defaults to all artifact files.",
-        },
+        files:         { type: "string", description: "Optional comma-separated file paths to include." },
       },
       required: ["commitMessage"],
       run: (input) => {
         const files = input.files
-          ? String(input.files)
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
+          ? String(input.files).split(",").map((s) => s.trim()).filter(Boolean)
           : undefined;
         return runGithubProposePush(ctx, { ...input, files });
       },
