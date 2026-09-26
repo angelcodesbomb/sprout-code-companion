@@ -7,33 +7,32 @@
  * Model is read from process.env.GROQ_MODEL.
  * Default: "llama-3.3-70b-versatile"  (tool-calling capable, free tier)
  *
+ * Multi-model support:
+ *   llama-3.3-70b-versatile  — standard OpenAI tool-calling format (default)
+ *   openai/gpt-oss-*         — OpenAI format but may inject built-in tools (guarded)
+ *   qwen/*                   — sends tools as JSON schema in system prompt instead of
+ *                              the tools API field; parses XML <tool_call> blocks from
+ *                              the response content. Fully transparent to callers.
+ *
  * DO NOT hardcode a model string anywhere else in the codebase.
  * Always import getModel() or GROQ_MODEL from this file so a swap is a
  * single config change in .env.local.
- *
- * Usage:
- *   import { callGroqWithTools } from "@/lib/orchestrator/groq.js";
- *
- *   const pick = await callGroqWithTools(messages, toolDefs);
- *   // pick: { toolName: string, toolInput: object } | { done: true, content: string }
  */
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
-/**
- * The active model name.  Single source of truth — never duplicated elsewhere.
- * @returns {string}
- */
 export function getModel() {
   return process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
+}
+
+/** Returns true for Qwen models which use a different tool-calling format. */
+function isQwenModel(model) {
+  return model.toLowerCase().startsWith("qwen/") || model.toLowerCase().startsWith("qwen");
 }
 
 /**
  * Converts our tools.js tool definitions into the OpenAI function-calling
  * format expected by the Groq API.
- *
- * @param {Array<{ name: string, description: string, parameters: object }>} tools
- * @returns {Array<object>}  — OpenAI-format tool definitions
  */
 function toOpenAITools(tools) {
   return tools.map((t) => ({
@@ -50,6 +49,89 @@ function toOpenAITools(tools) {
   }));
 }
 
+/**
+ * For Qwen models: inject the tool list as a JSON block in the system prompt.
+ * Only modifies the system message — subsequent messages are passed through unchanged.
+ */
+function buildQwenSystemPrompt(systemContent, tools) {
+  // Compact tool list — just name + description to save tokens
+  const toolSummary = tools
+    .map((t) => `- ${t.name}: ${t.description.split(".")[0]}`)
+    .join("\n");
+
+  // Full schema for the model to reference
+  const toolSchema = JSON.stringify(
+    tools.map((t) => ({
+      name: t.name,
+      parameters: t.parameters,
+      required: t.required ?? Object.keys(t.parameters),
+    })),
+    null,
+    2
+  );
+
+  return (
+    systemContent +
+    `\n\n═══ TOOL CALLING INSTRUCTIONS ═══════════════════════════════════════\n` +
+    `After each step, respond with EXACTLY ONE tool call as a bare JSON object:\n` +
+    `{"name": "<tool_name>", "arguments": {"param": "value"}}\n\n` +
+    `Do NOT wrap in XML. Do NOT add any text before or after the JSON.\n` +
+    `Only respond with plain text (no JSON) when the entire goal is complete.\n\n` +
+    `Available tools:\n${toolSummary}\n\n` +
+    `Tool parameter schemas:\n${toolSchema}\n` +
+    `═══════════════════════════════════════════════════════════════════════`
+  );
+}
+
+function injectToolsIntoMessages(messages, tools) {
+  const hasSystem = messages[0]?.role === "system";
+  if (hasSystem) {
+    return [
+      { role: "system", content: buildQwenSystemPrompt(messages[0].content, tools) },
+      ...messages.slice(1),
+    ];
+  }
+  return [
+    { role: "system", content: buildQwenSystemPrompt("", tools) },
+    ...messages,
+  ];
+}
+
+/**
+ * Try to parse a Qwen-style tool call from message content.
+ * Qwen may emit:
+ *   <tool_call>\n{"name": "...", "arguments": {...}}\n</tool_call>
+ *   {"name": "...", "arguments": {...}}   (plain JSON)
+ */
+function parseQwenToolCall(content) {
+  if (!content) return null;
+
+  // Strip <think>...</think> blocks that Qwen sometimes prepends
+  const stripped = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  // Try XML tool_call wrapper first
+  const xmlMatch = stripped.match(/<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/i);
+  const jsonStr = xmlMatch ? xmlMatch[1] : stripped;
+
+  // Find the outermost JSON object
+  const start = jsonStr.indexOf("{");
+  const end   = jsonStr.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+
+  try {
+    const parsed = JSON.parse(jsonStr.slice(start, end + 1));
+    if (parsed.name && (parsed.arguments !== undefined || parsed.parameters !== undefined)) {
+      return {
+        name:      parsed.name,
+        arguments: parsed.arguments ?? parsed.parameters ?? {},
+      };
+    }
+  } catch {
+    // Not valid JSON — not a tool call
+  }
+  return null;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -62,7 +144,7 @@ async function fetchGroqCompletion(body, apiKey, attempt = 0) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000), // 60s — generous for cold starts + large prompts
+    signal: AbortSignal.timeout(60_000),
   });
 
   if (res.status === 429 && attempt < 4) {
@@ -88,11 +170,8 @@ async function fetchGroqCompletion(body, apiKey, attempt = 0) {
  *   { toolName: string, toolInput: object }   — model wants to call a tool
  *   { done: true, content: string }            — model finished (no tool call)
  *
- * Throws on network errors or non-2xx HTTP responses.
- *
- * @param {Array<{ role: string, content: string }>} messages
- * @param {Array<{ name: string, description: string, parameters: object }>} toolDefs
- * @returns {Promise<{ toolName: string, toolInput: object } | { done: true, content: string }>}
+ * Handles both OpenAI-format tool calls (llama, gpt-oss) and Qwen's
+ * XML/JSON-in-content tool call format transparently.
  */
 export async function callGroqWithTools(messages, toolDefs) {
   const apiKey = process.env.GROQ_API_KEY;
@@ -100,16 +179,29 @@ export async function callGroqWithTools(messages, toolDefs) {
     throw new Error("[orchestrator/groq] GROQ_API_KEY is not set.");
   }
 
-  const body = {
-    model: getModel(),
-    messages,
-    tools: toOpenAITools(toolDefs),
-    // Force the model to pick a tool (or "none" / "auto").
-    // Using "auto" lets it either call a tool or reply with text.
-    tool_choice: "auto",
-    // Disable parallel calls so we always get exactly one tool decision per turn.
-    parallel_tool_calls: false,
-  };
+  const model = getModel();
+  const qwen  = isQwenModel(model);
+  const validToolNames = new Set(toolDefs.map((t) => t.name));
+
+  let body;
+  if (qwen) {
+    // Qwen: inject tools into the system prompt, don't use the tools API field.
+    // This avoids the XML/400 error from mismatched tool-calling protocols.
+    body = {
+      model,
+      messages: injectToolsIntoMessages(messages, toolDefs),
+      temperature: 0.2,
+      // No tools/tool_choice/parallel_tool_calls — Qwen handles it via system prompt
+    };
+  } else {
+    body = {
+      model,
+      messages,
+      tools: toOpenAITools(toolDefs),
+      tool_choice: "auto",
+      parallel_tool_calls: false,
+    };
+  }
 
   const data = await fetchGroqCompletion(body, apiKey);
   const message = data.choices?.[0]?.message;
@@ -118,9 +210,41 @@ export async function callGroqWithTools(messages, toolDefs) {
     throw new Error("[orchestrator/groq] Unexpected response shape — no message in choices[0].");
   }
 
-  // Model chose to call a tool
+  // ── Qwen path: parse tool call from message content ───────────────────────
+  if (qwen) {
+    const raw = message.content ?? "";
+    const toolCall = parseQwenToolCall(raw);
+
+    // Debug log — shows exactly what Qwen returned each step
+    console.log(
+      `[orchestrator/groq][qwen] raw response: ${raw.replace(/<think>[\s\S]*?<\/think>/gi, "<think>...</think>").slice(0, 300)}`
+    );
+
+    if (toolCall && validToolNames.has(toolCall.name)) {
+      const toolInput = typeof toolCall.arguments === "string"
+        ? JSON.parse(toolCall.arguments)
+        : toolCall.arguments;
+      console.log(`[orchestrator/groq][qwen] parsed tool call: ${toolCall.name}`, toolInput);
+      return { toolName: toolCall.name, toolInput };
+    }
+    // No valid tool call found — model is done
+    const clean = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    console.log(`[orchestrator/groq][qwen] no tool call found — treating as done`);
+    return { done: true, content: clean };
+  }
+
+  // ── Standard OpenAI path (llama, gpt-oss) ────────────────────────────────
   if (message.tool_calls && message.tool_calls.length > 0) {
-    const call = message.tool_calls[0]; // parallel_tool_calls is false, so exactly one
+    const call = message.tool_calls[0];
+
+    // Guard: reject built-in tools from models like gpt-oss-120b
+    if (!validToolNames.has(call.function.name)) {
+      console.warn(
+        `[orchestrator/groq] Model called unknown tool "${call.function.name}" — treating as done.`
+      );
+      return { done: true, content: message.content ?? "" };
+    }
+
     let toolInput;
     try {
       toolInput = typeof call.function.arguments === "string"
@@ -134,6 +258,5 @@ export async function callGroqWithTools(messages, toolDefs) {
     return { toolName: call.function.name, toolInput };
   }
 
-  // Model chose to respond with text (no tool call) — signals the loop is done
   return { done: true, content: message.content ?? "" };
 }

@@ -2,7 +2,7 @@
  * Orchestrator Loop — coordinates agent tools for production-site builds.
  */
 
-import { callGroqWithTools } from "./groq.js";
+import { callGroqWithTools, getModel } from "./groq.js";
 import { createOrchestratorTools, findTool } from "./tools.js";
 import { assertToolResult } from "./validate.js";
 import { createRunContext, serializeContext } from "./context.js";
@@ -13,6 +13,11 @@ const MAX_STEPS = 24;
 
 const CODEGEN_TOOLS = new Set(["ui_agent_generate", "api_agent_generate"]);
 const REVIEW_TOOLS = new Set(["monitor_review_output", "security_review_output"]);
+
+function isQwenStyleModel() {
+  const m = getModel().toLowerCase();
+  return m.startsWith("qwen/") || m.startsWith("qwen");
+}
 
 /**
  * Pre-execution gate (orchestrator-level policy before calling an agent tool).
@@ -54,11 +59,12 @@ function monitorGate(step) {
 export async function runOrchestrator({
   goal,
   mapSnapshot = null,
+  githubToken = null,
   autoApproveHuman = false,
   onToolStart,
   onStepComplete,
 }) {
-  const ctx = createRunContext({ goal, mapSnapshot, autoApproveHuman });
+  const ctx = createRunContext({ goal, mapSnapshot, githubToken, autoApproveHuman });
   const tools = createOrchestratorTools(ctx);
 
   /** @type {Array<object>} */
@@ -166,6 +172,28 @@ export async function runOrchestrator({
       toolResultMessage(stepNum, result)
     );
 
+    // For Qwen (system-prompt tool calling), replace the standard tool message pair
+    // with a plain assistant/user exchange that Qwen reads correctly.
+    // We already pushed the OpenAI-format messages above for non-Qwen models —
+    // for Qwen we swap the last two messages out.
+    if (isQwenStyleModel()) {
+      // Remove the last two messages (assistantToolMessage + toolResultMessage)
+      messages.splice(messages.length - 2, 2);
+      // Add a Qwen-readable pair instead
+      messages.push(
+        {
+          role: "assistant",
+          content: JSON.stringify({ name: toolName, arguments: toolInput ?? {} }),
+        },
+        {
+          role: "user",
+          content: result.ok
+            ? `Tool result: ${JSON.stringify(result.output)}\n\nContinue with the next pipeline step.`
+            : `Tool "${toolName}" returned an error: ${result.error}\n\nDecide how to proceed.`,
+        }
+      );
+    }
+
     if (CODEGEN_TOOLS.has(toolName) && result.ok) {
       messages.push({
         role: "user",
@@ -186,6 +214,7 @@ export async function runOrchestrator({
 function toolNameToAgentLabel(toolName) {
   if (toolName.startsWith("github_")) return "GitHub";
   if (toolName.startsWith("map_parser")) return "Map Parser";
+  if (toolName.startsWith("db_agent")) return "Database";
   if (toolName.startsWith("ui_agent")) return "UI";
   if (toolName.startsWith("api_agent")) return "API";
   if (toolName.startsWith("monitor_")) return "Monitor";

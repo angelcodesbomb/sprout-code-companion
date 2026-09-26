@@ -3,6 +3,7 @@
  */
 
 export const PIPELINE_AGENTS = [
+  { name: "GitHub", tone: "coral", description: "Reads, creates and pushes repos" },
   { name: "UI", tone: "pink", description: "Checks layouts and components" },
   { name: "Database", tone: "cyan", description: "Understands your data model" },
   { name: "API", tone: "mint", description: "Maps requests and responses" },
@@ -16,12 +17,13 @@ const AGENT_BY_NAME = Object.fromEntries(PIPELINE_AGENTS.map((a) => [a.name, a])
 /** @param {string} toolName */
 export function toolToDisplayAgent(toolName) {
   if (!toolName) return null;
+  if (toolName.startsWith("github_")) return "GitHub";
   if (toolName.startsWith("ui_agent") || toolName.startsWith("live_preview")) return "UI";
+  if (toolName.startsWith("db_agent")) return "Database";
   if (toolName.startsWith("api_agent")) return "API";
   if (toolName.startsWith("monitor_")) return "Review";
   if (toolName.startsWith("security_")) return "Security";
   if (toolName.startsWith("map_parser")) return "Database";
-  if (toolName.startsWith("github_")) return "Validation";
   return null;
 }
 
@@ -30,9 +32,10 @@ export function stepToDisplayAgent(step) {
   const fromTool = toolToDisplayAgent(step.toolName ?? "");
   if (fromTool) return fromTool;
   const label = step.agent ?? "";
+  if (label === "GitHub") return "GitHub";
+  if (label === "Database") return "Database";
   if (label === "Monitor") return "Review";
   if (label === "Map Parser") return "Database";
-  if (label === "GitHub") return "Validation";
   if (label === "Live Preview") return "UI";
   if (AGENT_BY_NAME[label]) return label;
   return "Review";

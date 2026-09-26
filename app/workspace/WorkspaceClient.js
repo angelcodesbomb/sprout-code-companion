@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { parseGithubTree } from "@/lib/parseGithubTree";
-import { buildRepoMap } from "@/lib/repoMap";
+import { buildRepoMap, repoMapKey } from "@/lib/repoMap";
 import { useRepoMapSummarize } from "@/hooks/useRepoMapSummarize";
 import { useRepoDependencies } from "@/hooks/useRepoDependencies";
 import { RepoMapProvider } from "@/context/RepoMapContext";
+import { useRunHistory } from "@/hooks/useRunHistory";
 
 const codeBlocks = [
   {
@@ -157,9 +158,23 @@ export default function WorkspaceClient() {
   const [repoMap,  setRepoMap]  = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Derive repoKey for history persistence (e.g. "owner/repo@main")
+  const repoKey = repoMeta ? repoMapKey(repoMeta) : null;
+
+  // ── Run history (persisted per repo in localStorage) ───────────────────
+  const { runs: historyRuns, saveRun, deleteRun, clearHistory, buildContextString } =
+    useRunHistory(repoKey);
+
   const runOrchestratorWithContext = useCallback(
-    (goal) => handleOrchestratorRun(goal, { mapSnapshot: repoMap, autoApproveHuman: true }),
-    [handleOrchestratorRun, repoMap]
+    (goal) => {
+      // Prepend recent run context so the orchestrator knows what was built before
+      const historyContext = buildContextString(3);
+      const fullGoal = historyContext
+        ? `${goal}\n\n---\nPRIOR RUNS FOR THIS REPO:\n${historyContext}`
+        : goal;
+      return handleOrchestratorRun(fullGoal, { mapSnapshot: repoMap, autoApproveHuman: true });
+    },
+    [handleOrchestratorRun, repoMap, buildContextString]
   );
 
   const {
@@ -167,6 +182,30 @@ export default function WorkspaceClient() {
     getDescriptionForPath, getDomainForPath,
     getPointersForPath, getRoleForPath, getWorkflowForPath,
   } = useRepoMapSummarize(repoMap, setRepoMap);
+
+  // ── Save run to history when orchestrator completes ─────────────────────
+  // We track the most recent goal separately so we can save it with the run.
+  const [lastGoal, setLastGoal] = useState("");
+
+  // Intercept runOrchestratorWithContext to capture the raw goal before history
+  // context is appended, so history entries show the user's original intent.
+  const handleOrchestratorRunWithHistory = useCallback((goal) => {
+    setLastGoal(goal);
+    return runOrchestratorWithContext(goal);
+  }, [runOrchestratorWithContext]);
+
+  useEffect(() => {
+    if (orchStatus === "done" && lastGoal) {
+      saveRun({
+        goal:        lastGoal,
+        steps:       orchSteps,
+        finalAnswer: orchFinalAnswer,
+        files:       orchFiles?.files ?? [],
+      });
+    }
+    // Only fire when status transitions to "done"
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orchStatus]);
 
   const { edges: depEdges, edgesByPath: depEdgesByPath, status: depStatus } =
     useRepoDependencies(repoMeta, repoMap);
@@ -221,7 +260,11 @@ export default function WorkspaceClient() {
         orchFinalAnswer={orchFinalAnswer}
         orchError={orchError}
         orchFiles={orchFiles}
-        onOrchestratorRun={runOrchestratorWithContext}
+        onOrchestratorRun={handleOrchestratorRunWithHistory}
+        historyRuns={historyRuns}
+        onDeleteRun={deleteRun}
+        onClearHistory={clearHistory}
+        onReplayGoal={handleOrchestratorRunWithHistory}
       />
     </RepoMapProvider>
   );

@@ -1,19 +1,24 @@
 /**
- * Orchestrator Tool Registry — one tool per agent capability (stubs for now).
+ * Orchestrator Tool Registry — one tool per agent capability.
+ * UI Agent and GitHub Agent are real implementations; others are stubs.
  */
 
 import {
-  stubGithubProposeInit,
-  stubGithubConfirmHuman,
   stubMapParserLoad,
   stubMapParserRefresh,
   stubMonitorReview,
   stubSecurityReview,
   stubLivePreviewSync,
-  stubGithubProposePush,
   stubCodegenAgent,
 } from "./agents/stubs.js";
 import { runUiAgent } from "./agents/uiAgent.js";
+import {
+  runGithubReadRepo,
+  runGithubProposeInit,
+  runGithubProposePush,
+  runGithubConfirmHuman,
+} from "./agents/githubAgent.js";
+import { runDbAgent } from "./agents/dbAgent.js";
 
 /** @typedef {import("./context.js").OrchestratorContext} OrchestratorContext */
 
@@ -24,30 +29,51 @@ import { runUiAgent } from "./agents/uiAgent.js";
 export function createOrchestratorTools(ctx) {
   return [
     {
+      name: "github_read_repo",
+      description:
+        "GitHub Agent: read an existing GitHub repository's file tree and load it as the repo map context. " +
+        "Call this at the start of a run when the user provides an existing repo (owner/repo). " +
+        "Populates ctx with the file map so downstream agents have full repo context.",
+      parameters: {
+        owner: { type: "string", description: "GitHub username or org, e.g. vercel." },
+        repo: { type: "string", description: "Repository name, e.g. next.js." },
+        fetchContent: {
+          type: "boolean",
+          description:
+            "Whether to also fetch a sample of file contents for richer context. Defaults to true.",
+        },
+      },
+      required: ["owner", "repo"],
+      run: (input) => runGithubReadRepo(ctx, input),
+    },
+    {
       name: "github_propose_init_repo",
       description:
-        "GitHub Agent: propose creating a new repository for the project. Requires human approval before creation.",
+        "GitHub Agent: propose creating a new GitHub repository for the project. " +
+        "Actually calls the GitHub API to create the repo when approved. " +
+        "Requires human approval before creation unless autoApproveHuman is on.",
       parameters: {
         repoName: { type: "string", description: "Repository name (e.g. my-saas-app)." },
         description: { type: "string", description: "Short repo description." },
-        template: {
-          type: "string",
-          description: "Starter template id, e.g. nextjs-app, vite-react.",
+        private: {
+          type: "boolean",
+          description: "Whether to create a private repo. Defaults to false.",
         },
       },
       required: ["repoName"],
-      run: (input) => stubGithubProposeInit(ctx, input),
+      run: (input) => runGithubProposeInit(ctx, input),
     },
     {
       name: "github_confirm_human_action",
       description:
-        "Apply human approval or rejection for a pending GitHub action (init repo or push).",
+        "Apply human approval or rejection for a pending GitHub action (init repo or push). " +
+        "On approval, the GitHub API call is executed immediately (create repo or commit + push).",
       parameters: {
         actionId: { type: "string", description: "Id from a propose_* tool output." },
         approved: { type: "boolean", description: "True if the human approved." },
       },
       required: ["actionId", "approved"],
-      run: (input) => stubGithubConfirmHuman(ctx, input),
+      run: (input) => runGithubConfirmHuman(ctx, input),
     },
     {
       name: "map_parser_load_cache",
@@ -69,6 +95,28 @@ export function createOrchestratorTools(ctx) {
       parameters: {},
       required: [],
       run: () => stubMapParserRefresh(ctx),
+    },
+    {
+      name: "db_agent_design_schema",
+      description:
+        "Database Agent: design a local JSON-backed data schema for the project and generate " +
+        "db/schema.json (schema definition), db/seed.json (realistic seed data), and lib/db.js " +
+        "(zero-dependency in-memory CRUD store). Call this before ui_agent_generate when the " +
+        "project needs persistent data (users, posts, products, orders, etc.). " +
+        "Also generates lib/db.types.ts for TypeScript projects.",
+      parameters: {
+        task: {
+          type: "string",
+          description:
+            "What data the project needs, e.g. 'a blog with posts, authors, and comments'.",
+        },
+        spec: {
+          type: "string",
+          description: "Optional extra requirements, e.g. specific fields or relations.",
+        },
+      },
+      required: ["task"],
+      run: (input) => runDbAgent(ctx, input),
     },
     {
       name: "ui_agent_generate",
@@ -155,12 +203,15 @@ export function createOrchestratorTools(ctx) {
     {
       name: "github_propose_push",
       description:
-        "GitHub Agent: propose pushing committed changes to the remote. Requires human approval.",
+        "GitHub Agent: propose pushing all generated artifact files to the remote repo as a single commit. " +
+        "Actually calls the GitHub Git Data API (blob → tree → commit → ref update) when approved. " +
+        "Only call this after monitor_review_output and security_review_output have both passed.",
       parameters: {
         commitMessage: { type: "string", description: "Git commit message." },
         files: {
           type: "string",
-          description: "Optional comma-separated paths to include; defaults to all artifacts.",
+          description:
+            "Optional comma-separated file paths to include; defaults to all artifact files.",
         },
       },
       required: ["commitMessage"],
@@ -171,7 +222,7 @@ export function createOrchestratorTools(ctx) {
               .map((s) => s.trim())
               .filter(Boolean)
           : undefined;
-        return stubGithubProposePush(ctx, { ...input, files });
+        return runGithubProposePush(ctx, { ...input, files });
       },
     },
   ];
