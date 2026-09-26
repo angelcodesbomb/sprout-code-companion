@@ -244,6 +244,7 @@ PERFORMANCE
 
 ═══ GUARDRAILS (hard rules — never violate) ════════════════════════════
 - NEVER include API keys, tokens, passwords, or env vars in component code.
+- For imports between generated files use "./filename.js" (flat relative) — NEVER absolute paths like "/lib/db.js" or "/src/components/Foo.jsx".
 - NEVER use dangerouslySetInnerHTML unless explicitly required and the content is sanitised.
 - NEVER use eval(), new Function(), or any dynamic code execution.
 - NEVER import from next/server, next/headers, or any server-only module.

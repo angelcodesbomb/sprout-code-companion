@@ -226,7 +226,8 @@ Rules:
 - No imports from Next.js (next/image, next/router, etc.) — keep it pure React.
 - Named exports only (not default) unless it's a page file.
 - No external API calls in component code.
-- Semantic HTML, aria-labels on all interactive elements.`;
+- Semantic HTML, aria-labels on all interactive elements.
+- For imports between generated files use "./filename.js" (flat relative) — never absolute paths like "/lib/db.js".`;
 }
 
 function parseResponse(raw) {

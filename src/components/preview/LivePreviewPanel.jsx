@@ -90,11 +90,35 @@ function buildAppJs(generatedFiles) {
   return `import React from "react";\n${imports}\n\nexport default function App() {\n  return (\n    <div>\n${renders}\n    </div>\n  );\n}`;
 }
 
-// ─── Normalise agent file path → absolute Sandpack path ──────────────────────
-// Preserves directory structure (e.g. src/components/Foo.jsx → /src/components/Foo.jsx)
-// so relative imports between files can resolve.
+// ─── Normalise agent file path → flat Sandpack root path ────────────────────
+// Sandpack runs in a single virtual directory. Flattening all files to /Foo.jsx
+// means any import between generated files resolves as "./db.js", "./utils.js" etc.
+// The UI agent's system prompt already tells it to use simple relative imports.
 function normalizePath(path) {
-  return path.startsWith("/") ? path : `/${path}`;
+  const clean = path.startsWith("/") ? path : `/${path}`;
+  // Keep only the filename — strip any directory prefix
+  const parts = clean.split("/").filter(Boolean);
+  return `/${parts[parts.length - 1]}`;
+}
+
+// ─── Rewrite absolute/deep imports in generated content ──────────────────────
+// Catches patterns like:
+//   import x from "/lib/db.js"
+//   import x from "../lib/db.js"
+//   import x from "../../utils/foo"
+// and rewrites them to "./filename" so Sandpack can resolve them.
+function rewriteImports(content) {
+  return content.replace(
+    /from\s+["']([./][^"']+)["']/g,
+    (match, specifier) => {
+      // Extract just the filename from the specifier
+      const parts = specifier.split("/").filter(Boolean);
+      const filename = parts[parts.length - 1];
+      // If it already looks like ./foo just return as-is
+      if (specifier.startsWith("./") && !specifier.includes("/", 2)) return match;
+      return `from "./${filename}"`;
+    }
+  );
 }
 
 // ─── Pipeline step pill ───────────────────────────────────────────────────────
@@ -219,7 +243,7 @@ export function LivePreviewPanel({
     let first = null;
     for (const f of orchFiles.files) {
       const sp = normalizePath(f.path);
-      next[sp] = f.content;
+      next[sp] = rewriteImports(f.content ?? "");
       if (!first) first = sp;
     }
 
@@ -292,7 +316,7 @@ export function LivePreviewPanel({
             setManualMessage(data.message ?? "");
           } else if (event === "file") {
             const sp = normalizePath(data.path);
-            collected[sp] = data.content;
+            collected[sp] = rewriteImports(data.content ?? "");
             if (!firstFile.current) firstFile.current = sp;
             count++;
             setManualCount(count);
