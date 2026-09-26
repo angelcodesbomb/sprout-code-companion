@@ -3294,3 +3294,439 @@ button {
   border: 1.5px solid color-mix(in oklab, var(--coral) 35%, var(--border));
   border-radius: 8px 5px 9px 5px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Live Preview Panel
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.lp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-width: 1120px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ── Task input area ─────────────────────────────────────────────────────── */
+.lp-input-area {
+  border: 2px solid var(--border);
+  border-radius: 14px 8px 15px 7px;
+  background: var(--card);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lp-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.lp-task-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font: 500 13px var(--font-sans);
+  color: var(--foreground);
+  line-height: 1.5;
+  padding: 0;
+}
+
+.lp-task-input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.lp-task-input:disabled {
+  opacity: 0.5;
+}
+
+.lp-spec-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-top: 1.5px dashed var(--border);
+  outline: none;
+  resize: none;
+  font: 400 12px var(--font-sans);
+  color: var(--foreground);
+  line-height: 1.5;
+  padding: 8px 0 0;
+  margin-top: 4px;
+}
+
+.lp-spec-input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+.lp-input-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.lp-spec-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1.5px dashed var(--border);
+  border-radius: 20px;
+  padding: 4px 10px;
+  font: 500 10px var(--font-mono);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 150ms, border-color 150ms;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.lp-spec-toggle:hover {
+  color: var(--foreground);
+  border-color: var(--foreground);
+}
+
+.lp-generate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: 2.5px solid var(--foreground);
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font: 700 12px var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms, color 150ms, transform 150ms;
+}
+
+.lp-generate-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.lp-generate-btn:not(:disabled):hover {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+
+/* ── Meta bar ────────────────────────────────────────────────────────────── */
+.lp-meta-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  min-height: 28px;
+  flex-wrap: wrap;
+}
+
+.lp-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1.5px solid var(--badge-color, var(--mint));
+  border-radius: 20px;
+  font: 600 10px var(--font-mono);
+  color: var(--badge-color, var(--mint));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.lp-status-badge__spin {
+  animation: fmg-spin 0.8s linear infinite;
+}
+
+.lp-summary {
+  font: 400 12px var(--font-sans);
+  color: var(--muted-foreground);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-mode-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px 5px 9px 4px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 140ms, border-color 140ms, background 140ms;
+}
+
+.lp-mode-btn:hover,
+.lp-mode-btn.is-active {
+  color: var(--foreground);
+  border-color: var(--foreground);
+  background: var(--muted);
+}
+
+/* ── Error ───────────────────────────────────────────────────────────────── */
+.lp-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  background: color-mix(in oklab, var(--coral) 10%, transparent);
+  border: 1.5px solid var(--coral);
+  border-radius: 8px 5px 9px 4px;
+  font: 500 12px var(--font-mono);
+  color: var(--coral);
+  margin-bottom: 8px;
+}
+
+/* ── File tabs ───────────────────────────────────────────────────────────── */
+.lp-file-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.lp-file-tab {
+  padding: 4px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  font: 500 10px var(--font-mono);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 140ms, border-color 140ms;
+}
+
+.lp-file-tab.is-active,
+.lp-file-tab:hover {
+  color: var(--foreground);
+  border-color: var(--foreground);
+}
+
+/* ── Sandpack container ──────────────────────────────────────────────────── */
+.lp-sandpack-wrap {
+  border: 2px solid var(--border);
+  border-radius: 14px 8px 15px 7px;
+  overflow: hidden;
+  /* Sandpack needs a defined height to render its preview correctly */
+}
+
+/* Override Sandpack's own border-radius so it matches our design */
+.lp-sandpack-wrap .sp-wrapper {
+  border-radius: 0 !important;
+}
+
+.lp-sandpack-wrap .sp-layout {
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+/* Subtle generation pulse on the sandpack wrapper while streaming */
+.lp-sandpack-wrap.is-generating {
+  box-shadow: 0 0 0 2px var(--coral);
+  animation: lp-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes lp-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--coral) 80%, transparent); }
+  50%       { box-shadow: 0 0 0 4px color-mix(in oklab, var(--coral) 30%, transparent); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Orchestrator Command Bar (top of Build panel)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.orch-command-bar {
+  background: var(--card);
+  border: 2.5px solid var(--foreground);
+  border-radius: 16px 10px 17px 9px;
+  box-shadow: 4px 4px 0 color-mix(in oklab, var(--foreground) 12%, transparent);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.orch-command-bar__inner {
+  padding: 16px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orch-command-bar__label {
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+
+.orch-command-bar__input-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.orch-command-bar__input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font: 500 14px var(--font-sans);
+  color: var(--foreground);
+  line-height: 1.55;
+  padding: 0;
+}
+
+.orch-command-bar__input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.65;
+}
+
+.orch-command-bar__input:disabled {
+  opacity: 0.45;
+}
+
+.orch-command-bar__run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 20px;
+  border: 2.5px solid var(--foreground);
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font: 700 13px var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 140ms, color 140ms, border-color 140ms;
+}
+
+.orch-command-bar__run-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.orch-command-bar__run-btn:not(:disabled):hover {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #fff;
+}
+
+/* Pipeline step pills row */
+.orch-command-bar__pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.orch-step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  font: 600 10px var(--font-mono);
+  color: var(--muted-foreground);
+  letter-spacing: 0.03em;
+  transition: border-color 200ms, color 200ms;
+}
+
+.orch-step-pill.is-live {
+  border-color: var(--coral);
+  color: var(--coral);
+  background: color-mix(in oklab, var(--coral) 8%, transparent);
+}
+
+.orch-step-pill.is-fail {
+  border-color: color-mix(in oklab, var(--coral) 60%, transparent);
+  color: var(--coral);
+  opacity: 0.7;
+}
+
+.orch-step-pill__icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.orch-step-pill__label {
+  text-transform: uppercase;
+}
+
+/* Final answer */
+.orch-command-bar__answer {
+  font: 400 12px var(--font-sans);
+  color: var(--muted-foreground);
+  border-top: 1.5px dashed var(--border);
+  padding-top: 10px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.orch-command-bar__error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 12px var(--font-mono);
+  color: var(--coral);
+  margin: 0;
+  padding-top: 6px;
+  border-top: 1.5px dashed color-mix(in oklab, var(--coral) 30%, transparent);
+}
+
+/* Section divider between orchestrator and manual */
+.lp-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 10px;
+  color: var(--muted-foreground);
+  font: 400 11px var(--font-mono);
+}
+
+.lp-section-divider::before,
+.lp-section-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--border);
+}
+
+/* Sidebar running badge */
+.agent-sidebar__running-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  font: 500 9px var(--font-mono);
+  color: var(--coral);
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+
+.agent-sidebar__running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  animation: lp-pulse 1.2s ease-in-out infinite;
+}
