@@ -188,64 +188,6 @@ Generate EXACTLY these files:
 
 Output ONLY valid JSON, no markdown:
 {"summary":"one sentence","schema":{...},"files":[{"path":"...","action":"create","content":"..."}]}`;
-}   EXACT PATTERN TO FOLLOW (write the actual code, not this pseudocode):
-   - Declare a SEED_DATA constant with all tables and 8-15 records each (copy from db/seed.json exactly)
-   - STORAGE_KEY = "sprout_db_<projectname>" (unique per project)
-   - loadDb(): tries JSON.parse(localStorage.getItem(STORAGE_KEY)), falls back to deep clone of SEED_DATA
-   - saveDb(db): calls localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
-   - Singleton: let _db = loadDb() at module level
-   - Export getAll(table): returns [..._db[table]] or throws "Unknown table: <name>"
-   - Export getById(table, id): returns matching record or null
-   - Export insert(table, record): spreads record + auto id, pushes to _db[table], calls saveDb, returns new record
-   - Export update(table, id, patch): maps over table replacing matched record, calls saveDb, returns updated or null
-   - Export remove(table, id): filters out matched record, calls saveDb, returns true/false
-   - Export reset(): sets _db back to deep clone of SEED_DATA, calls saveDb
-
-   Rules for db.js:
-   - SEED_DATA must contain ALL tables with 8-15 realistic records each
-   - NEVER use import to load JSON files — data must be inlined in SEED_DATA
-   - NEVER use fs, path, require(), or any Node-only API
-   - All mutations must call saveDb() so changes persist across page refreshes
-   - The module must use pure ES module syntax (export, not module.exports)
-
-4. lib/db.types.ts  (TypeScript projects only — omit entirely for JS projects)
-   Full TypeScript interfaces for every table record.
-   Also export a union type: type TableName = "users" | "posts" | ...
-
-═══ BEST PRACTICES ═════════════════════════════════════════════════════
-- Design the smallest schema that satisfies the goal — don't add tables speculatively.
-- Field names must be camelCase.
-- Every table must have an "id" field of type "id".
-- Dates stored as ISO 8601 strings in seed data.
-- The db.js store must be a singleton (module-level variable) so all imports share state.
-- NEVER include server-only imports (fs, path, crypto from Node) in db.js — it must be isomorphic.
-- NEVER add console.log, debugger, or TODO comments.
-
-═══ OUTPUT FORMAT ══════════════════════════════════════════════════════
-Reply with ONLY valid JSON, no markdown fences, no extra text:
-{
-  "summary": "One plain-English sentence describing the schema and what was generated.",
-  "schema": {
-    "tables": { ... }
-  },
-  "files": [
-    {
-      "path": "db/schema.json",
-      "action": "create",
-      "content": "full file content as a string"
-    },
-    {
-      "path": "db/seed.json",
-      "action": "create",
-      "content": "..."
-    },
-    {
-      "path": "lib/db.js",
-      "action": "create",
-      "content": "..."
-    }
-  ]
-}`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
