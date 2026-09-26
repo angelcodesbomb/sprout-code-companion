@@ -7,12 +7,13 @@ import {
   stubGithubConfirmHuman,
   stubMapParserLoad,
   stubMapParserRefresh,
-  stubCodegenAgent,
   stubMonitorReview,
   stubSecurityReview,
   stubLivePreviewSync,
   stubGithubProposePush,
+  stubCodegenAgent,
 } from "./agents/stubs.js";
+import { runUiAgent } from "./agents/uiAgent.js";
 
 /** @typedef {import("./context.js").OrchestratorContext} OrchestratorContext */
 
@@ -89,7 +90,7 @@ export function createOrchestratorTools(ctx) {
               .map((s) => s.trim())
               .filter(Boolean)
           : [];
-        return stubCodegenAgent(ctx, "UI", { ...input, targetPaths: paths });
+        return runUiAgent(ctx, { ...input, targetPaths: paths });
       },
     },
     {
