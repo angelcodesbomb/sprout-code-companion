@@ -8,7 +8,7 @@ import { assertToolResult } from "./validate.js";
 import { createRunContext, serializeContext } from "./context.js";
 import { buildOrchestratorSystemPrompt } from "./prompt.js";
 
-const MAX_STEPS = 12; // lower cap — saves tokens and avoids runaway loops
+const MAX_STEPS = 18; // full pipeline: init+map+db+ui+api+(monitor+security)×3+push+refresh
 
 const CODEGEN_TOOLS  = new Set(["ui_agent_generate", "api_agent_generate", "db_agent_design_schema"]);
 const REVIEW_TOOLS   = new Set(["monitor_review_output", "security_review_output"]);
@@ -60,13 +60,29 @@ function compressToolResult(result, toolName) {
 /**
  * Trim the non-system messages to MAX_HISTORY_MESSAGES (sliding window).
  * Always keeps: [system, original_user_goal, ...last N messages]
+ *
+ * IMPORTANT: after slicing, the first message in the window must NOT be
+ * role:"tool" without a preceding role:"assistant" that contains tool_calls.
+ * Groq's Harmony tokenizer attributes a tool-result message to the tool
+ * name found in the preceding assistant turn. If that assistant turn was
+ * sliced away, Harmony throws "Tools should have a name!" — a misleading
+ * error whose real cause is the broken message chain.
+ *
+ * Fix: after slicing, advance past any leading role:"tool" orphans so the
+ * window always starts on a valid message boundary (assistant or user).
  */
 function trimMessages(messages) {
   if (messages.length <= MAX_HISTORY_MESSAGES + 2) return messages;
   const system   = messages[0];
   const userGoal = messages[1];
   const rest     = messages.slice(2);
-  const trimmed  = rest.slice(-MAX_HISTORY_MESSAGES);
+  let   trimmed  = rest.slice(-MAX_HISTORY_MESSAGES);
+
+  // Drop leading orphaned tool messages — they have no preceding tool_call.
+  while (trimmed.length > 0 && trimmed[0].role === "tool") {
+    trimmed = trimmed.slice(1);
+  }
+
   return [system, userGoal, ...trimmed];
 }
 
@@ -140,6 +156,12 @@ export async function runOrchestrator({
       `[orchestrator/loop] Step ${stepNum}: ${toolName}`,
       "→", result.ok ? "ok" : `error: ${result.error}`
     );
+
+    // Track successful completions — the system prompt reads this to skip already-done steps.
+    if (result.ok) {
+      ctx.completedTools = ctx.completedTools ?? new Set();
+      ctx.completedTools.add(toolName);
+    }
 
     if (typeof onStepComplete === "function") onStepComplete(step);
 
