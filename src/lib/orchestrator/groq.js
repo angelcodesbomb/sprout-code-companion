@@ -38,18 +38,18 @@ function isQwenModel(model) {
 function toOpenAITools(tools) {
   return tools.map((t) => {
     const required = t.required ?? Object.keys(t.parameters ?? {});
+    const hasParams = Object.keys(t.parameters ?? {}).length > 0;
     const tool = {
       type: "function",
       function: {
         name: t.name,
         description: t.description,
-        parameters: {
-          type: "object",
-          properties: t.parameters ?? {},
-        },
+        // Groq 400s when properties is empty {} — use a dummy no-op param instead
+        parameters: hasParams
+          ? { type: "object", properties: t.parameters }
+          : { type: "object", properties: { _noop: { type: "string", description: "Unused." } } },
       },
     };
-    // Only include required array when it has entries — Groq 400s on empty required
     if (required.length > 0) {
       tool.function.parameters.required = required;
     }
