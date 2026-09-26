@@ -36,18 +36,25 @@ function isQwenModel(model) {
  * format expected by the Groq API.
  */
 function toOpenAITools(tools) {
-  return tools.map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: {
-        type: "object",
-        properties: t.parameters,
-        required: t.required ?? Object.keys(t.parameters),
+  return tools.map((t) => {
+    const required = t.required ?? Object.keys(t.parameters ?? {});
+    const tool = {
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: {
+          type: "object",
+          properties: t.parameters ?? {},
+        },
       },
-    },
-  }));
+    };
+    // Only include required array when it has entries — Groq 400s on empty required
+    if (required.length > 0) {
+      tool.function.parameters.required = required;
+    }
+    return tool;
+  });
 }
 
 /**
