@@ -431,19 +431,18 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
     // 2. Pick display root
     const displayRoot = focusNode ?? treeRef.current;
 
-    // 3. Layout
-    const rootH  = buildH(displayRoot);
-    const radius = Math.min(W, H) / 2 - MARGIN;
+    // 3. Layout — a conventional top-down architecture tree.
+    const rootH = buildH(displayRoot);
+    d3.tree()
+      .nodeSize([NODE_GAP_X, NODE_GAP_Y])
+      .separation((a, b) => a.parent === b.parent ? 1 : 1.35)(rootH);
 
-    d3.cluster()
-      .size([2 * Math.PI, radius])
-      .separation((a, b) => (a.parent === b.parent ? 1 : 1.8) / Math.max(1, a.depth))
-      (rootH);
-
+    const xValues = rootH.descendants().map((d) => d.x);
+    const minX = Math.min(...xValues);
+    const maxX = Math.max(...xValues);
     rootH.each((d) => {
-      const p = polar2cart(d.x, d.y);
-      d._cx = p.x;
-      d._cy = p.y;
+      d._cx = d.x - (minX + maxX) / 2;
+      d._cy = d.y - 30;
     });
 
     // ── Store positions so dep-edge effect can use them ────────────────────
@@ -474,13 +473,45 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
     svg.call(zoom);
     zoomRef.current = zoom;
 
-    // 6. Containment edges
-    function radialLink(d) {
+    // 6. Domain / area boundaries. Each top-level branch gets a soft region,
+    // using the AI domain when available and the branch name as a fallback.
+    const domainGroups = g.append("g").attr("class", "fmg-domain-groups");
+    (rootH.children ?? []).forEach((branch) => {
+      const members = branch.descendants();
+      const xs = members.map((d) => d._cx);
+      const ys = members.map((d) => d._cy);
+      const domain = getDomainRef.current?.(branch.data.path) ||
+        members.map((d) => getDomainRef.current?.(d.data.path)).find(Boolean) ||
+        branch.data.name || "area";
+      const toneName = DOMAIN_TONE[domain] ?? TONES[branch.data._tone ?? 0];
+      const fill = cssVar(toneName);
+      const left = Math.min(...xs) - 66;
+      const top = Math.min(...ys) - 48;
+      const right = Math.max(...xs) + 66;
+      const bottom = Math.max(...ys) + 48;
+
+      domainGroups.append("rect")
+        .attr("class", "fmg-domain-group")
+        .attr("x", left).attr("y", top)
+        .attr("width", Math.max(120, right - left))
+        .attr("height", Math.max(100, bottom - top))
+        .attr("rx", 16).attr("fill", fill).attr("stroke", fill)
+        .attr("stroke-width", 1.2).attr("stroke-dasharray", "5 5");
+      domainGroups.append("text")
+        .attr("class", "fmg-domain-group__label")
+        .attr("x", left + 16).attr("y", top + 22)
+        .text(String(domain).toUpperCase());
+    });
+
+    // 7. Containment edges — clean elbow connectors from box to box.
+    function treeLink(d) {
       const s = d.source, t = d.target;
-      const mr = (s.y + t.y) / 2;
-      const ms = polar2cart(s.x, mr);
-      const mt = polar2cart(t.x, mr);
-      return `M${s._cx},${s._cy} C${ms.x},${ms.y} ${mt.x},${mt.y} ${t._cx},${t._cy}`;
+      const sourceHalf = s.depth === 0 ? ROOT_H / 2 : s.data.type === "folder" ? FOLDER_H / 2 : FILE_R;
+      const targetHalf = t.data.type === "folder" ? FOLDER_H / 2 : FILE_R;
+      const sy = s._cy + sourceHalf;
+      const ty = t._cy - targetHalf;
+      const midY = sy + (ty - sy) * 0.5;
+      return `M${s._cx},${sy} V${midY} H${t._cx} V${ty}`;
     }
 
     const linkSel = g.append("g").attr("class", "fmg-links")
@@ -488,7 +519,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
       .data(rootH.links())
       .join("path")
       .attr("class", "fmg-link")
-      .attr("d", radialLink);
+      .attr("d", treeLink);
 
     linkSel.each(function (d) {
       const len = this.getTotalLength();
@@ -502,7 +533,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
     // so it can redraw independently when `edges` arrives without re-running
     // the expensive full layout.
 
-    // 7. Nodes
+    // 8. Nodes
     const nodeSel = g.append("g").attr("class", "fmg-nodes")
       .selectAll("g")
       .data(rootH.descendants())
@@ -516,29 +547,43 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
       const el      = d3.select(this);
       const isRoot  = d.depth === 0;
       const isFolder = d.data.type === "folder";
-      const r    = nodeR(d.depth);
       const tone = d.data._tone ?? 0;
       const fill = cssVar(TONES[tone]);
 
       el.style("opacity", 0).style("animation-delay", `${d.depth * 35}ms`);
       el.transition().delay(d.depth * 35).duration(220).style("opacity", 1);
 
-      el.append("circle")
-        .attr("r", r)
+      const width = isRoot ? ROOT_W : isFolder ? FOLDER_W : FILE_R * 2;
+      const height = isRoot ? ROOT_H : isFolder ? FOLDER_H : FILE_R * 2;
+      const shape = isFolder || isRoot
+        ? el.append("rect")
+          .attr("class", "fmg-node-shape")
+          .attr("x", -width / 2).attr("y", -height / 2)
+          .attr("width", width).attr("height", height)
+          .attr("rx", isRoot ? ROOT_H / 2 : 9)
+        : el.append("circle")
+          .attr("class", "fmg-node-shape")
+          .attr("r", FILE_R);
+
+      shape
         .attr("fill", isRoot ? cssVar("coral") : isFolder ? "var(--card)" : fill)
         .attr("stroke", isRoot ? "var(--foreground)" : fill)
         .attr("stroke-width", isRoot ? 3 : isFolder ? 2.5 : 1.5);
 
       if (isRoot) {
-        el.append("circle")
-          .attr("r", r - 7).attr("fill", "none")
+        el.append("rect")
+          .attr("class", "fmg-root-detail")
+          .attr("x", -width / 2 + 6).attr("y", -height / 2 + 6)
+          .attr("width", width - 12).attr("height", height - 12)
+          .attr("rx", (height - 12) / 2).attr("fill", "none")
           .attr("stroke", "var(--foreground)").attr("stroke-width", 1.5)
           .attr("stroke-dasharray", "3 3").attr("opacity", 0.55);
       }
 
       if (isFolder && d.data._collapsed && d.data.children?.length) {
         el.append("circle")
-          .attr("r", Math.max(2, r * 0.35)).attr("fill", fill)
+          .attr("class", "fmg-collapsed-dot")
+          .attr("r", 4).attr("fill", fill)
           .attr("pointer-events", "none");
       }
 
@@ -548,7 +593,7 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
         const pillFill = domain ? cssVar(toneName) : cssVar(TONES[tone]);
         el.append("rect")
           .attr("class", "fmg-domain-pill")
-          .attr("x", r * 0.55).attr("y", -r * 0.85)
+          .attr("x", width / 2 - (domain ? 22 : 10)).attr("y", -height / 2 - 5)
           .attr("width", domain ? 14 : 6).attr("height", 6)
           .attr("rx", 3).attr("ry", 2)
           .attr("fill", pillFill)
@@ -556,19 +601,18 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
           .attr("pointer-events", "none").attr("title", domain ?? "");
       }
 
-      const flip = d.x > Math.PI;
-      const lx   = (r + 5) * (flip ? -1 : 1);
+      const lx = isRoot || isFolder ? 0 : FILE_R + 10;
       el.append("text")
-        .attr("x", lx).attr("dy", "0.32em")
-        .attr("text-anchor", flip ? "end" : "start")
-        .attr("opacity", d.depth <= 2 ? 0.9 : 0)
+        .attr("x", lx).attr("dy", isRoot || isFolder ? "0.32em" : "0.32em")
+        .attr("text-anchor", isRoot || isFolder ? "middle" : "start")
+        .attr("opacity", 0.92)
         .text(() => {
           const name = d.data.name || (repoMeta?.repo ?? "repo");
           return name.length > 20 ? name.slice(0, 18) + "…" : name;
         });
     });
 
-    // 8. Hover
+    // 9. Hover
     nodeSel
       .on("mouseenter", function (event, d) {
         const svgEl   = svgRef.current;
@@ -585,10 +629,10 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
         setTooltipRef.current({ visible: true, x: tx, y: ty, node: d.data });
         requestSummaryRef.current?.(d.data.path ?? "");
 
-        const r = nodeR(d.depth);
-        d3.select(this).select("circle:first-child")
+        d3.select(this).select(".fmg-node-shape")
+          .classed("fmg-node-shape--hot", true)
           .transition().duration(160)
-          .attr("r", (d.depth === 0 ? 22 : r) * 1.5);
+          .attr("stroke-width", isRootNode(d) ? 3.8 : 2.8);
 
         // Dim containment links not in ancestor chain
         const ancSet = new Set(getAncestors(d).map((a) => a.data.path));
@@ -621,8 +665,10 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
       .on("mouseleave", function (event, d) {
         setTooltipRef.current((t) => ({ ...t, visible: false }));
 
-        d3.select(this).select("circle:first-child")
-          .transition().duration(180).attr("r", nodeR(d.depth));
+        d3.select(this).select(".fmg-node-shape")
+          .classed("fmg-node-shape--hot", false)
+          .transition().duration(180)
+          .attr("stroke-width", isRootNode(d) ? 3 : d.data.type === "folder" ? 2.5 : 1.5);
 
         linkSelRef.current
           ?.classed("fmg-link--dim", false).classed("fmg-link--lit", false);
