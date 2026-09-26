@@ -1,7 +1,7 @@
 import { createRunContext } from "@/lib/orchestrator/context.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
-const UI_MODEL = process.env.GROQ_MODEL_UI || "qwen/qwen3.8-27b";
+const UI_MODEL = process.env.GROQ_MODEL_UI || "openai/gpt-oss-120b";
 
 /**
  * POST /api/agents/ui/stream
@@ -231,11 +231,42 @@ Rules:
 }
 
 function parseResponse(raw) {
-  const t = raw.trim();
-  try { return JSON.parse(t); } catch { /* */ }
+  const t = raw.trim().replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  function repairJson(str) {
+    let out = "", inString = false, i = 0;
+    while (i < str.length) {
+      const ch = str[i];
+      if (inString) {
+        if (ch === "\\") { out += ch; i++; if (i < str.length) { out += str[i]; i++; } continue; }
+        if (ch === '"')  { inString = false; out += ch; i++; continue; }
+        if (ch === "\n") { out += "\\n"; i++; continue; }
+        if (ch === "\r") { out += "\\r"; i++; continue; }
+        if (ch === "\t") { out += "\\t"; i++; continue; }
+        const code = ch.charCodeAt(0);
+        if (code < 0x20) { out += `\\u${code.toString(16).padStart(4, "0")}`; i++; continue; }
+        out += ch; i++; continue;
+      }
+      if (ch === '"') inString = true;
+      out += ch; i++;
+    }
+    return out;
+  }
+
+  function tryParse(str) {
+    try { return JSON.parse(str); } catch { /* */ }
+    try { return JSON.parse(repairJson(str)); } catch { /* */ }
+    return null;
+  }
+
+  const direct = tryParse(t);
+  if (direct) return direct;
+
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) { try { return JSON.parse(fence[1].trim()); } catch { /* */ } }
+  if (fence) { const fenced = tryParse(fence[1].trim()); if (fenced) return fenced; }
+
   const s = t.indexOf("{"), e = t.lastIndexOf("}");
-  if (s !== -1 && e > s) { try { return JSON.parse(t.slice(s, e + 1)); } catch { /* */ } }
+  if (s !== -1 && e > s) { const sliced = tryParse(t.slice(s, e + 1)); if (sliced) return sliced; }
+
   return null;
 }

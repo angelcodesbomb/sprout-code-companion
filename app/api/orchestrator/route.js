@@ -53,15 +53,15 @@ export async function POST(request) {
 
               // Emit generated files immediately for any codegen agent so the
               // client can update Sandpack without waiting for the "done" event.
-              // Covers: ui_agent_generate, api_agent_generate, db_agent_design_schema
-              const files = step.result?.output?.artifact?.files;
-              if (step.result?.ok && Array.isArray(files) && files.length > 0) {
-                const { artifact } = step.result.output;
+              // step.artifact carries the full uncompressed artifact (files included);
+              // step.result is already compressed (no file content) for the step event.
+              const artifact = step.artifact;
+              if (step.result?.ok && artifact?.files?.length > 0) {
                 send("ui_files", {
                   artifactId: artifact.id,
                   summary:    artifact.summary ?? "",
                   agent:      artifact.agent   ?? step.agent ?? step.toolName,
-                  files,   // [{path, content, action}]
+                  files:      artifact.files,
                 });
               }
             },

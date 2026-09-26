@@ -1,27 +1,39 @@
 /**
  * Orchestrator Loop
+ * =================
+ * Pipeline execution is now deterministic: buildPlan() computes the phase
+ * sequence up front and the loop iterates over it directly. No LLM call
+ * decides "what's next" — routing is pure logic in planner.js.
+ *
+ * What was removed vs the previous version:
+ *   - callGroqWithTools / getModel imports (routing no longer uses LLM)
+ *   - messages[] conversation history array
+ *   - trimMessages() + MAX_HISTORY_MESSAGES
+ *   - assistantToolMessage() + toolResultMessage()
+ *   - isQwenStyleModel() and the Qwen message-splice block
+ *   - buildOrchestratorSystemPrompt import
+ *   - MAX_STEPS = 14 (replaced by plan.length, at most 7 phases)
+ *
+ * What is unchanged in behaviour:
+ *   - securityGate / monitorGate fire at exactly the same relative point
+ *     (immediately after a CODEGEN_TOOLS step completes, before the next phase)
+ *   - onToolStart / onStepComplete fire with the same timing and argument shapes
+ *   - steps[] entry shape is identical: { step, toolName, toolInput, result,
+ *     timestamp, agent, securityFlags? }
+ *   - Final return shape: { steps, finalAnswer, context }
+ *   - compressToolResult is kept — still used for the step.result stored in
+ *     steps[] and emitted via onStepComplete to the SSE / frontend layer
  */
 
-import { callGroqWithTools, getModel } from "./groq.js";
 import { createOrchestratorTools, findTool } from "./tools.js";
 import { assertToolResult } from "./validate.js";
 import { createRunContext, serializeContext } from "./context.js";
-import { buildOrchestratorSystemPrompt } from "./prompt.js";
 import { runMonitorReview, runSecurityReview } from "./agents/reviewAgent.js";
-
-const MAX_STEPS = 14; // trimmed: no review tool steps in count any more
+import { buildPlan, phaseToToolName, buildToolInput, buildFinalAnswer } from "./planner.js";
 
 const CODEGEN_TOOLS = new Set(["ui_agent_generate", "api_agent_generate", "db_agent_design_schema"]);
-// REVIEW_TOOLS removed — review is now automatic middleware, not orchestrator tools
 
-// How many non-system messages to keep in the sliding window.
-// System message is always kept. This caps context to ~4000 tokens of history.
-const MAX_HISTORY_MESSAGES = 8;
-
-function isQwenStyleModel() {
-  const m = getModel().toLowerCase();
-  return m.startsWith("qwen/") || m.startsWith("qwen");
-}
+// ─── Gates ────────────────────────────────────────────────────────────────────
 
 /**
  * Security gate — runs automatically after every codegen step.
@@ -53,10 +65,12 @@ async function monitorGate(artifact) {
   }
 }
 
+// ─── Result compression ───────────────────────────────────────────────────────
+
 /**
- * Strip file content from a tool result before storing in message history.
- * File content can be thousands of tokens — the model doesn't need it after the step.
- * The orchestrator only needs to see: ok, artifactId, summary, paths.
+ * Strip file content from a tool result before storing in steps[].
+ * File content can be thousands of tokens — the step record only needs
+ * metadata: ok, artifactId, summary, paths.
  */
 function compressToolResult(result, toolName) {
   if (!result?.output) return result;
@@ -85,185 +99,7 @@ function compressToolResult(result, toolName) {
   return result;
 }
 
-/**
- * Trim the non-system messages to MAX_HISTORY_MESSAGES (sliding window).
- * Always keeps: [system, original_user_goal, ...last N messages]
- *
- * IMPORTANT: after slicing, the first message in the window must NOT be
- * role:"tool" without a preceding role:"assistant" that contains tool_calls.
- * Groq's Harmony tokenizer attributes a tool-result message to the tool
- * name found in the preceding assistant turn. If that assistant turn was
- * sliced away, Harmony throws "Tools should have a name!" — a misleading
- * error whose real cause is the broken message chain.
- *
- * Fix: after slicing, advance past any leading role:"tool" orphans so the
- * window always starts on a valid message boundary (assistant or user).
- */
-function trimMessages(messages) {
-  if (messages.length <= MAX_HISTORY_MESSAGES + 2) return messages;
-  const system   = messages[0];
-  const userGoal = messages[1];
-  const rest     = messages.slice(2);
-  let   trimmed  = rest.slice(-MAX_HISTORY_MESSAGES);
-
-  // Drop leading orphaned tool messages — they have no preceding tool_call.
-  while (trimmed.length > 0 && trimmed[0].role === "tool") {
-    trimmed = trimmed.slice(1);
-  }
-
-  return [system, userGoal, ...trimmed];
-}
-
-export async function runOrchestrator({
-  goal,
-  mapSnapshot      = null,
-  githubToken      = null,
-  autoApproveHuman = false,
-  onToolStart,
-  onStepComplete,
-}) {
-  const ctx   = createRunContext({ goal, mapSnapshot, githubToken, autoApproveHuman });
-  const tools = createOrchestratorTools(ctx);
-
-  let messages = [
-    { role: "system", content: buildOrchestratorSystemPrompt(ctx) },
-    { role: "user",   content: goal },
-  ];
-
-  const steps = [];
-
-  for (let stepNum = 1; stepNum <= MAX_STEPS; stepNum++) {
-    // Refresh system prompt each step so state changes (phase, repo, map) are visible
-    messages[0] = { role: "system", content: buildOrchestratorSystemPrompt(ctx) };
-
-    // Trim history before every Groq call
-    messages = trimMessages(messages);
-
-    const decision = await callGroqWithTools(messages, tools);
-
-    if (decision.done) {
-      return { steps, finalAnswer: decision.content, context: serializeContext(ctx) };
-    }
-
-    const { toolName, toolInput } = decision;
-
-    const tool = findTool(tools, toolName);
-    if (!tool) {
-      return {
-        steps,
-        finalAnswer: `Orchestrator error: unknown tool "${toolName}".`,
-        context: serializeContext(ctx),
-      };
-    }
-
-    if (typeof onToolStart === "function") onToolStart(toolName);
-
-    const raw    = await tool.run(toolInput ?? {});
-    const result = assertToolResult(raw, toolName);
-
-    const step = {
-      step:      stepNum,
-      toolName,
-      toolInput: toolInput ?? {},
-      result,
-      timestamp: new Date().toISOString(),
-      agent:     toolNameToAgentLabel(toolName),
-    };
-    steps.push(step);
-
-    console.log(
-      `[orchestrator/loop] Step ${stepNum}: ${toolName}`,
-      "→", result.ok ? "ok" : `error: ${result.error}`
-    );
-
-    // Track successful completions
-    if (result.ok) {
-      ctx.completedTools = ctx.completedTools ?? new Set();
-      ctx.completedTools.add(toolName);
-    }
-
-    if (typeof onStepComplete === "function") onStepComplete(step);
-
-    // ── Automatic review middleware (replaces orchestrator review tools) ──────
-    // Runs after every codegen step without burning an orchestrator turn.
-    // Uses Qwen directly (~300 tokens) — the orchestrator never sees this.
-    if (CODEGEN_TOOLS.has(toolName) && result.ok) {
-      const artifact = result.output?.artifact;
-
-      // Monitor gate (quality check)
-      const monResult = await monitorGate(artifact);
-      if (!monResult.pass) {
-        console.log(`[orchestrator/loop] Monitor gate FAIL — self-healing: ${monResult.feedback}`);
-        // Self-heal: re-run the same codegen tool with the feedback injected,
-        // without asking the orchestrator. Limit to one auto-retry.
-        const retryInput = {
-          ...toolInput,
-          spec: `${toolInput.spec ?? ""}\n\nFix required: ${monResult.feedback}`.trim(),
-        };
-        const retryRaw    = await tool.run(retryInput);
-        const retryResult = assertToolResult(retryRaw, toolName);
-        if (retryResult.ok) {
-          // Replace the artifact in ctx with the fixed version
-          const fixedArtifact = retryResult.output?.artifact;
-          if (fixedArtifact) {
-            const idx = ctx.artifacts.findIndex((a) => a.id === result.output?.artifact?.id);
-            if (idx !== -1) ctx.artifacts[idx] = fixedArtifact;
-          }
-          console.log(`[orchestrator/loop] Monitor self-heal succeeded.`);
-          // Update the step result so SSE gets the fixed files
-          step.result = retryResult;
-          if (typeof onStepComplete === "function") onStepComplete(step);
-        } else {
-          console.warn(`[orchestrator/loop] Monitor self-heal failed — continuing anyway.`);
-        }
-      }
-
-      // Security gate (security check on the final artifact)
-      const finalArtifact = ctx.artifacts[ctx.artifacts.length - 1];
-      const secResult = await securityGate(finalArtifact);
-      if (!secResult.pass) {
-        console.warn(
-          `[orchestrator/loop] Security gate flags: ${(secResult.flags ?? []).join(", ")} — logged, continuing.`
-        );
-        // Security issues are logged and attached to the step but don't block
-        // the pipeline — the orchestrator is not told about them to save tokens.
-        step.securityFlags = secResult.flags;
-      }
-    }
-
-    // Compress result BEFORE pushing to message history
-    const compressed = compressToolResult(result, toolName);
-
-    messages.push(
-      assistantToolMessage(stepNum, toolName, toolInput),
-      toolResultMessage(stepNum, compressed)
-    );
-
-    if (isQwenStyleModel()) {
-      messages.splice(messages.length - 2, 2);
-      messages.push(
-        {
-          role:    "assistant",
-          content: JSON.stringify({ name: toolName, arguments: toolInput ?? {} }),
-        },
-        {
-          role:    "user",
-          content: result.ok
-            ? `Result: ${JSON.stringify(compressed.output ?? {})} — continue.`
-            : `Error in ${toolName}: ${result.error} — decide how to proceed.`,
-        }
-      );
-    }
-    // No CODEGEN inject message — review is handled by middleware above,
-    // not by the orchestrator. This saves 2 orchestrator turns per codegen step.
-  }
-
-  return {
-    steps,
-    finalAnswer: `Reached max steps (${MAX_STEPS}).`,
-    context: serializeContext(ctx),
-  };
-}
+// ─── Agent label helper ───────────────────────────────────────────────────────
 
 function toolNameToAgentLabel(toolName) {
   if (toolName.startsWith("github_"))       return "GitHub";
@@ -277,25 +113,161 @@ function toolNameToAgentLabel(toolName) {
   return "Orchestrator";
 }
 
-function assistantToolMessage(stepNum, toolName, toolInput) {
-  return {
-    role:    "assistant",
-    content: null,
-    tool_calls: [{
-      id:   `call_${stepNum}`,
-      type: "function",
-      function: {
-        name:      toolName,
-        arguments: JSON.stringify(toolInput ?? {}),
-      },
-    }],
-  };
-}
+// ─── Main orchestrator ────────────────────────────────────────────────────────
 
-function toolResultMessage(stepNum, result) {
+export async function runOrchestrator({
+  goal,
+  mapSnapshot      = null,
+  githubToken      = null,
+  autoApproveHuman = false,
+  onToolStart,
+  onStepComplete,
+}) {
+  const ctx   = createRunContext({ goal, mapSnapshot, githubToken, autoApproveHuman });
+  const tools = createOrchestratorTools(ctx);
+
+  // Compute the full pipeline plan up front — pure function, no LLM call.
+  const plan = buildPlan(goal, ctx);
+
+  const steps = [];
+
+  for (const phase of plan) {
+    const toolName = phaseToToolName(phase);
+    const tool     = findTool(tools, toolName);
+
+    if (!tool) {
+      // Should never happen if planner.js and tools.js are in sync —
+      // surface it clearly rather than silently skipping.
+      return {
+        steps,
+        finalAnswer: `Orchestrator error: planner requested unknown tool "${toolName}" for phase "${phase}".`,
+        context: serializeContext(ctx),
+      };
+    }
+
+    const toolInput = buildToolInput(phase, ctx);
+
+    if (typeof onToolStart === "function") onToolStart(toolName);
+
+    const raw    = await tool.run(toolInput);
+    const result = assertToolResult(raw, toolName);
+
+    const stepNum = steps.length + 1;
+    const step = {
+      step:      stepNum,
+      toolName,
+      toolInput,
+      result,
+      timestamp: new Date().toISOString(),
+      agent:     toolNameToAgentLabel(toolName),
+    };
+    steps.push(step);
+
+    console.log(
+      `[orchestrator/loop] Step ${stepNum} (${phase}): ${toolName}`,
+      "→", result.ok ? "ok" : `error: ${result.error}`
+    );
+
+    // Track successful completions (same as before — ctx.completedTools mirrors
+    // the old loop's tracking, kept in case agents read it from ctx).
+    if (result.ok) {
+      ctx.completedTools = ctx.completedTools ?? new Set();
+      ctx.completedTools.add(toolName);
+    }
+
+    // ── Hard stop on codegen failure — never push incomplete work ────────────
+    // If a codegen tool (ui_agent, db_agent, api_agent) fails, abort the entire
+    // pipeline immediately. Continuing to push would commit partial/no-UI artifacts.
+    if (!result.ok && CODEGEN_TOOLS.has(toolName)) {
+      console.error(
+        `[orchestrator/loop] Codegen step "${toolName}" failed — aborting pipeline before push.`,
+        result.error
+      );
+      for (const s of steps) delete s.artifact;
+      return {
+        steps,
+        finalAnswer: `Pipeline aborted: ${toolName} failed — ${result.error ?? "unknown error"}. No files were pushed.`,
+        context: serializeContext(ctx),
+      };
+    }
+
+    // Compress result for the step record / SSE payload (strips large file content).
+    // The full artifact is stashed on step.artifact so the onStepComplete callback
+    // (route.js) can emit the ui_files SSE event with file content intact.
+    // It is stripped from the step before the final steps[] is returned.
+    const compressed = compressToolResult(result, toolName);
+    step.result   = compressed;
+    step.artifact = result.output?.artifact ?? null;   // full artifact, not compressed
+
+    if (typeof onStepComplete === "function") onStepComplete(step);
+
+    // ── Automatic review middleware ───────────────────────────────────────────
+    // Runs immediately after every codegen step — same relative position as
+    // before this refactor. Gates fire before the next phase executes.
+    if (CODEGEN_TOOLS.has(toolName) && result.ok) {
+      const artifact = result.output?.artifact;
+
+      // Monitor gate (quality check)
+      const monResult = await monitorGate(artifact);
+      if (!monResult.pass) {
+        console.log(`[orchestrator/loop] Monitor gate FAIL — self-healing: ${monResult.feedback}`);
+        // Self-heal: re-run the same codegen tool with the feedback injected,
+        // without adding an extra plan phase. Limit to one auto-retry.
+        const retryInput = {
+          ...toolInput,
+          spec: `${toolInput.spec ?? ""}\n\nFix required: ${monResult.feedback}`.trim(),
+        };
+        const retryRaw    = await tool.run(retryInput);
+        const retryResult = assertToolResult(retryRaw, toolName);
+        if (retryResult.ok) {
+          const fixedArtifact = retryResult.output?.artifact;
+          if (fixedArtifact) {
+            const idx = ctx.artifacts.findIndex((a) => a.id === result.output?.artifact?.id);
+            if (idx !== -1) ctx.artifacts[idx] = fixedArtifact;
+          }
+          console.log(`[orchestrator/loop] Monitor self-heal succeeded.`);
+          // Update the step result so SSE gets the fixed files
+          step.result   = compressToolResult(retryResult, toolName);
+          step.artifact = retryResult.output?.artifact ?? null;
+          if (typeof onStepComplete === "function") onStepComplete(step);
+        } else {
+          console.warn(`[orchestrator/loop] Monitor self-heal failed — continuing anyway.`);
+        }
+      }
+
+      // Security gate (security check on the final artifact after any self-heal)
+      const finalArtifact = ctx.artifacts[ctx.artifacts.length - 1];
+      const secResult = await securityGate(finalArtifact);
+      if (!secResult.pass) {
+        console.warn(
+          `[orchestrator/loop] Security gate flags: ${(secResult.flags ?? []).join(", ")} — logged, continuing.`
+        );
+      }
+      // Attach both gate results to the step so they reach the SSE client and
+      // can be displayed in the review/security results panel.
+      step.monitorResult = {
+        pass:     monResult.pass,
+        feedback: monResult.feedback ?? null,
+        healed:   !monResult.pass,  // true when self-heal was attempted
+      };
+      step.securityResult = {
+        pass:  secResult.pass,
+        flags: secResult.flags ?? [],
+        note:  secResult.note  ?? null,
+      };
+      step.securityFlags = secResult.flags ?? [];
+      // Re-emit the step with review data attached so SSE clients get the full picture.
+      if (typeof onStepComplete === "function") onStepComplete(step);
+    }
+  }
+
+  // Strip the temporary full-artifact field before returning — it was only
+  // needed during onStepComplete callbacks and should not be in the final payload.
+  for (const s of steps) delete s.artifact;
+
   return {
-    role:         "tool",
-    tool_call_id: `call_${stepNum}`,
-    content:      JSON.stringify(result),
+    steps,
+    finalAnswer: buildFinalAnswer(ctx),
+    context: serializeContext(ctx),
   };
 }

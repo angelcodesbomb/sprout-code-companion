@@ -66,17 +66,33 @@ console.log(JSON.stringify(result.context, null, 2));
 console.log(`\nSteps: ${result.steps.length}`);
 
 const toolNames = result.steps.map((s) => s.toolName);
+
+// ── Updated expectations for the deterministic planner (post-refactor) ──────
+//
+// Previous behaviour (Groq routing loop):
+//   github_propose_init_repo → github_confirm_human_action → map_parser_load_cache
+//   → ui_agent_generate → monitor_review_output → security_review_output
+//
+// Current behaviour (deterministic planner):
+//   - The goal contains "acme/landing" (owner/repo) AND a mapSnapshot is
+//     provided → planner chooses repo_read (github_read_repo), not repo_init.
+//   - github_confirm_human_action is no longer a plan phase (no pending action).
+//   - monitor_review_output and security_review_output are no longer orchestrator
+//     tools — quality/security review runs as automatic middleware after each
+//     codegen step and does NOT appear in steps[]. This removes ~4 orchestrator
+//     turns per codegen step.
+//
 const expected = [
-  "github_propose_init_repo",
-  "github_confirm_human_action",
-  "map_parser_load_cache",
-  "ui_agent_generate",
-  "monitor_review_output",
-  "security_review_output",
+  "github_read_repo",      // planner: repo_read (existing repo + mapSnapshot provided)
+  "map_parser_load_cache", // planner: map
+  "ui_agent_generate",     // planner: ui
+  "github_propose_push",   // planner: push
 ];
 
 const missing = expected.filter((t) => !toolNames.includes(t));
 if (missing.length) {
   console.warn("\nWarning: expected tools not invoked:", missing.join(", "));
   console.warn("Invoked:", toolNames.join(" → "));
+} else {
+  console.log("\nAll expected tools invoked in correct order:", toolNames.join(" → "));
 }

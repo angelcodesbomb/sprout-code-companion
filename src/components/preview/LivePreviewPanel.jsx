@@ -1,5 +1,7 @@
 "use client";
 
+import { ReviewResultsPanel } from "../agents/ReviewResultsPanel.jsx";
+
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   SandpackProvider,
@@ -11,7 +13,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import {
   Play, Loader2, AlertCircle, Code2, Eye, Trash2, Sparkles,
-  Send, CheckCircle2, XCircle, GitBranch, Terminal,
+  Send, CheckCircle2, XCircle, GitBranch, Terminal, ShieldCheck, Columns,
 } from "lucide-react";
 import { RepoInput } from "../filemap/RepoInput";
 
@@ -124,16 +126,18 @@ function rewriteImports(content) {
 // ─── Pipeline step pill ───────────────────────────────────────────────────────
 
 const TOOL_LABELS = {
-  map_parser_load_cache:   "Loading map",
-  map_parser_refresh:      "Refreshing map",
-  ui_agent_generate:       "UI Agent",
-  api_agent_generate:      "API Agent",
-  monitor_review_output:   "Monitor",
-  security_review_output:  "Security",
-  live_preview_sync:       "Live Preview",
-  github_propose_push:     "GitHub Push",
-  github_propose_init_repo:"GitHub Init",
-  github_confirm_human_action: "Confirming",
+  map_parser_load_cache:        "Loading map",
+  map_parser_refresh:           "Refreshing map",
+  ui_agent_generate:            "UI Agent",
+  api_agent_generate:           "API Agent",
+  db_agent_design_schema:       "DB Agent",
+  monitor_review_output:        "Monitor",
+  security_review_output:       "Security",
+  live_preview_sync:            "Live Preview",
+  github_propose_push:          "GitHub Push",
+  github_propose_init_repo:     "GitHub Init",
+  github_read_repo:             "Reading repo",
+  github_confirm_human_action:  "Confirming",
 };
 
 function StepPill({ step, isLive }) {
@@ -223,6 +227,7 @@ export function LivePreviewPanel({
   const [activeFile,     setActiveFile]     = useState(null);
   const [previewSummary, setPreviewSummary] = useState("");
   const [panelMode,      setPanelMode]      = useState("preview");
+  const [showReviewPanel, setShowReviewPanel] = useState(true);
 
   // ── Manual (standalone) generation state ─────────────────────────────────
   const [manualTask,    setManualTask]    = useState("");
@@ -235,23 +240,41 @@ export function LivePreviewPanel({
   const abortRef    = useRef(null);
   const firstFile   = useRef(null);
 
+  // ── Clear stale files when a new orchestrator run begins ─────────────────
+  // Prevents db.js / UI files from a prior run mixing with the new run's files.
+  useEffect(() => {
+    if (orchStatus === "running") {
+      setGeneratedFiles({});
+      setActiveFile(null);
+      setPreviewSummary("");
+    }
+  }, [orchStatus]);
+
   // ── Sync Sandpack when orchestrator sends files ───────────────────────────
   useEffect(() => {
     if (!orchFiles?.files?.length) return;
 
     const next = {};
-    let first = null;
     for (const f of orchFiles.files) {
       const sp = normalizePath(f.path);
       next[sp] = rewriteImports(f.content ?? "");
-      if (!first) first = sp;
     }
 
-    setGeneratedFiles(next);
-    setActiveFile(first);
+    // Merge into existing files — don't replace. This preserves db.js (emitted
+    // by db_agent_design_schema) when the subsequent ui_agent step fires its own
+    // ui_files event. Later events can overwrite earlier files of the same path.
+    setGeneratedFiles((prev) => {
+      const merged = { ...prev, ...next };
+      return merged;
+    });
+    // Set activeFile to the first file of this batch only if nothing is active yet
+    setActiveFile((cur) => {
+      if (cur) return cur;
+      const first = Object.keys(next)[0] ?? null;
+      return first;
+    });
     setSandpackKey((k) => k + 1);
     setPreviewSummary(orchFiles.summary ?? "");
-    // Clear any manual error when orchestrator succeeds
     setManualError(null);
   }, [orchFiles]);
 
@@ -372,6 +395,12 @@ export function LivePreviewPanel({
   const isOrchRunning  = orchStatus === "running";
   const hasFiles       = Object.keys(generatedFiles).length > 0;
   const isManualStream = manualStatus === "streaming";
+
+  const reviewedSteps = orchSteps.filter(
+    (s) => s.monitorResult || s.securityResult || (s.securityFlags?.length > 0)
+  );
+  const hasReviewedSteps = reviewedSteps.length > 0;
+  const hasSecurityFlags = reviewedSteps.some((s) => s.securityResult?.pass === false || s.monitorResult?.pass === false);
 
   return (
     <div className="lp-panel">
@@ -559,21 +588,66 @@ export function LivePreviewPanel({
           </span>
         )}
         {previewSummary && <span className="lp-summary">{previewSummary}</span>}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          <button type="button" className={`lp-mode-btn ${panelMode === "preview" ? "is-active" : ""}`}
-            onClick={() => setPanelMode("preview")} title="Preview">
+        <div className="lp-mode-toolbar">
+          <button
+            type="button"
+            className={`lp-tab-btn ${panelMode === "preview" ? "is-active" : ""}`}
+            onClick={() => setPanelMode("preview")}
+            title="Preview"
+          >
             <Eye size={13} />
+            <span>Preview</span>
           </button>
-          <button type="button" className={`lp-mode-btn ${panelMode === "code" ? "is-active" : ""}`}
-            onClick={() => setPanelMode("code")} title="View code">
+
+          <button
+            type="button"
+            className={`lp-tab-btn ${panelMode === "code" ? "is-active" : ""}`}
+            onClick={() => setPanelMode("code")}
+            title="View code"
+          >
             <Code2 size={13} />
+            <span>Code</span>
           </button>
-          <button type="button" className={`lp-mode-btn ${panelMode === "console" ? "is-active" : ""}`}
-            onClick={() => setPanelMode("console")} title="Console (debug errors)">
+
+          <button
+            type="button"
+            className={`lp-tab-btn ${panelMode === "console" ? "is-active" : ""}`}
+            onClick={() => setPanelMode("console")}
+            title="Console (debug errors)"
+          >
             <Terminal size={13} />
+            <span>Console</span>
           </button>
+
+          {hasReviewedSteps && (
+            <button
+              type="button"
+              className={`lp-tab-btn lp-tab-btn--review ${panelMode === "review" ? "is-active" : ""}`}
+              onClick={() => setPanelMode("review")}
+              title="Review & Security Gate Audit"
+            >
+              <ShieldCheck size={13} color={hasSecurityFlags ? "#f87171" : "#34d399"} />
+              <span>Review ({reviewedSteps.length})</span>
+              <span className={`lp-tab-badge ${hasSecurityFlags ? "is-flagged" : "is-passed"}`}>
+                {hasSecurityFlags ? "!" : "✓"}
+              </span>
+            </button>
+          )}
+
+          {hasReviewedSteps && panelMode === "preview" && (
+            <button
+              type="button"
+              className={`lp-tab-btn ${showReviewPanel ? "is-active" : ""}`}
+              onClick={() => setShowReviewPanel((v) => !v)}
+              title="Toggle Split-Screen Review Sidebar"
+            >
+              <Columns size={13} />
+              <span>Split</span>
+            </button>
+          )}
+
           {hasFiles && (
-            <button type="button" className="lp-mode-btn" onClick={handleClear} title="Clear">
+            <button type="button" className="lp-tab-btn" onClick={handleClear} title="Clear">
               <Trash2 size={13} />
             </button>
           )}
@@ -586,34 +660,51 @@ export function LivePreviewPanel({
         </div>
       )}
 
-      <FileTabs files={sandpackFiles} activeFile={activeFile} onSelect={setActiveFile} />
+      {panelMode !== "review" && (
+        <FileTabs files={sandpackFiles} activeFile={activeFile} onSelect={setActiveFile} />
+      )}
 
-      {/* ══ SANDPACK ═════════════════════════════════════════════════════════ */}
-      <div className={`lp-sandpack-wrap${(isManualStream || isOrchRunning) ? " is-generating" : ""}`}>
-        <SandpackProvider
-          key={sandpackKey}
-          template="react"
-          theme={isDark ? "dark" : "light"}
-          files={sandpackFiles}
-          options={{
-            activeFile: activeFile ?? "/App.js",
-            visibleFiles: Object.keys(sandpackFiles).filter((p) => p !== "/index.js"),
-            recompileMode: "delayed",
-            recompileDelay: 300,
-          }}
-          customSetup={{ dependencies: { react: "^18.0.0", "react-dom": "^18.0.0" } }}
-        >
-          <SandpackLayout>
-            {panelMode === "code" ? (
-              <SandpackCodeEditor showTabs={false} showLineNumbers showInlineErrors wrapContent style={{ height: 520, fontSize: 12 }} />
-            ) : panelMode === "console" ? (
-              <SandpackConsole style={{ height: 520, fontSize: 12 }} />
-            ) : (
-              <SandpackPreview showNavigator={false} showRefreshButton showOpenInCodeSandbox={false} style={{ height: 520 }} />
-            )}
-          </SandpackLayout>
-        </SandpackProvider>
-      </div>
+      {/* ══ STAGE ════════════════════════════════════════════════════════════ */}
+      {panelMode === "review" ? (
+        <div className="lp-review-fullview">
+          <ReviewResultsPanel orchSteps={orchSteps} orchStatus={orchStatus} isFullView />
+        </div>
+      ) : (
+        <div className="lp-preview-stage">
+          <div className={`lp-sandpack-wrap${(isManualStream || isOrchRunning) ? " is-generating" : ""}`}>
+            <SandpackProvider
+              key={sandpackKey}
+              template="react"
+              theme={isDark ? "dark" : "light"}
+              files={sandpackFiles}
+              options={{
+                activeFile: activeFile ?? "/App.js",
+                visibleFiles: Object.keys(sandpackFiles).filter((p) => p !== "/index.js"),
+                recompileMode: "delayed",
+                recompileDelay: 300,
+              }}
+              customSetup={{ dependencies: { react: "^18.0.0", "react-dom": "^18.0.0" } }}
+            >
+              <SandpackLayout>
+                {panelMode === "code" ? (
+                  <SandpackCodeEditor showTabs={false} showLineNumbers showInlineErrors wrapContent style={{ height: 520, fontSize: 12 }} />
+                ) : panelMode === "console" ? (
+                  <SandpackConsole style={{ height: 520, fontSize: 12 }} />
+                ) : (
+                  <SandpackPreview showNavigator={false} showRefreshButton showOpenInCodeSandbox={false} style={{ height: 520 }} />
+                )}
+              </SandpackLayout>
+            </SandpackProvider>
+          </div>
+
+          {/* ══ SIDEBAR REVIEW PANEL (Only when toggled in split view) ══ */}
+          {hasReviewedSteps && showReviewPanel && (
+            <aside className="lp-review-results-wrap">
+              <ReviewResultsPanel orchSteps={orchSteps} orchStatus={orchStatus} />
+            </aside>
+          )}
+        </div>
+      )}
     </div>
   );
 }

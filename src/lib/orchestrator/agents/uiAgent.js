@@ -39,7 +39,7 @@
 import { uid } from "../context.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
-const UI_MODEL = process.env.GROQ_MODEL_UI || "qwen/qwen3.8-27b";
+const UI_MODEL = process.env.GROQ_MODEL_UI || "openai/gpt-oss-120b";
 
 // ─── Groq call ────────────────────────────────────────────────────────────────
 
@@ -160,7 +160,13 @@ function buildSystemPrompt(ctx, input) {
     : "";
 
   const dbSection = ctx.dbSchema?.tables
-    ? `\nDatabase schema available via import { getAll, getById, insert, update, remove } from "/lib/db.js":\n` +
+    ? `\nDatabase schema available. Import db.js using a path RELATIVE to your component file's location.\n` +
+      `Examples: component at app/page.jsx → import from "../lib/db.js"\n` +
+      `          component at components/MyList.jsx → import from "../lib/db.js"\n` +
+      `          component at lib/MyHelper.jsx → import from "./db.js"\n` +
+      `NEVER use absolute paths like "/lib/db.js" — Sandpack does not resolve them.\n` +
+      `Available exports: getAll, getById, insert, update, remove, reset\n` +
+      `Tables:\n` +
       Object.entries(ctx.dbSchema.tables)
         .map(([table, def]) => `  ${table}: { ${Object.keys(def.fields ?? {}).join(", ")} }`)
         .join("\n")
@@ -197,6 +203,12 @@ OUTPUT FORMAT — reply with ONLY valid JSON, no markdown fences, no extra text:
   ]
 }
 
+TOKEN BUDGET — IMPORTANT:
+- You have a limited token budget. To avoid truncation, keep each file under 120 lines.
+- If the task requires multiple components, split them into separate files and keep each concise.
+- If content would exceed the budget, generate only the primary entry file (App.jsx or main page) and omit secondary components.
+- A working single-file result is MUCH better than a truncated multi-file result.
+
 ═══ SANDPACK COMPATIBILITY (critical — preview will break if violated) ═══
 - ALWAYS use a default export for the main component: "export default function MyComponent()"
 - NEVER use TypeScript syntax — no type annotations, no generics like useState<string[]>(),
@@ -204,6 +216,7 @@ OUTPUT FORMAT — reply with ONLY valid JSON, no markdown fences, no extra text:
   The preview runs in a JavaScript-only Babel sandbox. TypeScript will crash it silently.
 - File extensions must be .jsx or .js — never .tsx or .ts.
 - JSX expression syntax: dynamic values in attributes MUST use {}: key={"value-" + index} not key="value"
+- String concatenation in JSX attributes MUST use template literals inside {}: aria-label={"Streak of " + count + " days"} — NEVER aria-label="Streak of " + count + " days" (syntax error in JSX)
 - NEVER use React.CSSProperties or any React type references.
 - Inline style objects must use plain JS objects with no type annotation:
   const styles = { main: { color: "red" } }  ← correct
@@ -257,35 +270,105 @@ PERFORMANCE
 - NEVER produce partial files — write the FULL file content every time, no "// rest unchanged".
 - NEVER invent new file paths that don't exist in the map unless the task explicitly requires a new file.
 - NEVER import from JSON files or use import assertions (assert { type: "json" }) — these don't work in the browser sandbox.
-- If the project has a db.js data layer, import it as: import { getAll, insert, update, remove } from "/lib/db.js"
-  Use absolute paths starting with "/" — relative paths like "../lib/db.js" do NOT resolve in the sandbox.`;
+- If the project has a db.js data layer, import it using a path RELATIVE to your component file:
+    app/page.jsx         → import from "../lib/db.js"
+    components/Foo.jsx   → import from "../lib/db.js"
+    lib/SomeThing.jsx    → import from "./db.js"
+  NEVER use absolute paths like "/lib/db.js" — Sandpack does not resolve them.
+  Available exports: getAll, getById, insert, update, remove, reset`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
 
+/**
+ * Repair common LLM JSON escaping mistakes before parsing:
+ * - Literal newlines / carriage returns / tabs inside string values
+ * - Unescaped backslashes that aren't already part of a valid escape sequence
+ *
+ * Operates character-by-character so it doesn't misfire on characters outside
+ * of string values (e.g. whitespace between keys is fine as-is).
+ */
+function repairJson(raw) {
+  let out = "";
+  let inString = false;
+  let i = 0;
+
+  while (i < raw.length) {
+    const ch = raw[i];
+
+    if (inString) {
+      if (ch === "\\") {
+        // Pass the backslash + next char through unchanged — it's already an
+        // escape sequence the model produced intentionally.
+        out += ch;
+        i++;
+        if (i < raw.length) { out += raw[i]; i++; }
+        continue;
+      }
+      if (ch === '"') {
+        // End of string
+        inString = false;
+        out += ch;
+        i++;
+        continue;
+      }
+      // Literal control characters inside a string — replace with JSON escapes
+      if (ch === "\n") { out += "\\n";  i++; continue; }
+      if (ch === "\r") { out += "\\r";  i++; continue; }
+      if (ch === "\t") { out += "\\t";  i++; continue; }
+      // Other control characters (0x00–0x1F) that are illegal in JSON strings
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) {
+        out += `\\u${code.toString(16).padStart(4, "0")}`;
+        i++;
+        continue;
+      }
+      out += ch;
+      i++;
+      continue;
+    }
+
+    // Outside a string
+    if (ch === '"') {
+      inString = true;
+    }
+    out += ch;
+    i++;
+  }
+
+  return out;
+}
+
 function parseResponse(raw) {
   const trimmed = raw.trim();
 
-  // Try direct parse
-  try {
-    return JSON.parse(trimmed);
-  } catch { /* fall through */ }
+  // Strip Qwen <think>...</think> blocks that sometimes prefix the response
+  const stripped = trimmed.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 
-  // Strip markdown fences if the model ignored the instruction
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    try {
-      return JSON.parse(fenceMatch[1].trim());
-    } catch { /* fall through */ }
+  // Helper: try to parse, with repair fallback
+  function tryParse(str) {
+    try { return JSON.parse(str); } catch { /* fall through */ }
+    try { return JSON.parse(repairJson(str)); } catch { /* fall through */ }
+    return null;
   }
 
-  // Last resort — find the outermost { } block
-  const start = trimmed.indexOf("{");
-  const end   = trimmed.lastIndexOf("}");
+  // 1. Direct parse (+ repair)
+  const direct = tryParse(stripped);
+  if (direct) return direct;
+
+  // 2. Strip markdown fences if the model ignored the instruction
+  const fenceMatch = stripped.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    const fenced = tryParse(fenceMatch[1].trim());
+    if (fenced) return fenced;
+  }
+
+  // 3. Last resort — find the outermost { } block
+  const start = stripped.indexOf("{");
+  const end   = stripped.lastIndexOf("}");
   if (start !== -1 && end > start) {
-    try {
-      return JSON.parse(trimmed.slice(start, end + 1));
-    } catch { /* fall through */ }
+    const sliced = tryParse(stripped.slice(start, end + 1));
+    if (sliced) return sliced;
   }
 
   return null;
@@ -313,20 +396,62 @@ export async function runUiAgent(ctx, input) {
   const userMsg  = `Task: ${input.task.trim()}`;
 
   let rawResponse;
+  let parsed = null;
+
+  // ── Attempt 1: full budget ────────────────────────────────────────────────
   try {
     rawResponse = await callGroq(
       [
         { role: "system", content: system },
         { role: "user",   content: userMsg },
       ],
-      // Large token budget — component files can be long
-      6000
+      // 4096 covers multi-file outputs; the truncation retry below handles edge cases
+      4096
     );
   } catch (err) {
     return { ok: false, output: null, error: err.message };
   }
 
-  const parsed = parseResponse(rawResponse);
+  parsed = parseResponse(rawResponse);
+
+  // ── Attempt 2: if the response looks truncated, retry asking for fewer files
+  if (!parsed && rawResponse) {
+    const looksLikeTruncation =
+      rawResponse.trim().startsWith("{") &&
+      !rawResponse.trim().endsWith("}");
+
+    if (looksLikeTruncation) {
+      const retryUserMsg =
+        `Task: ${input.task.trim()}\n\n` +
+        `IMPORTANT: Your previous response was cut off because it was too long. ` +
+        `This time, generate ONLY the single most important file (e.g. App.jsx or the main page component). ` +
+        `Keep the component under 150 lines. Reply with ONLY valid JSON — no markdown, no extra text.`;
+
+      try {
+        const retryRaw = await callGroq(
+          [
+            { role: "system", content: system },
+            { role: "user",   content: retryUserMsg },
+          ],
+          8192
+        );
+        const retryParsed = parseResponse(retryRaw);
+        if (retryParsed) {
+          parsed = retryParsed;
+          rawResponse = retryRaw;
+        } else {
+          // Return the original truncation error with a clear message
+          return {
+            ok: false,
+            output: null,
+            error: `[ui-agent] Response truncated and retry also failed. Raw (first 300): ${rawResponse.slice(0, 300)}`,
+          };
+        }
+      } catch (retryErr) {
+        return { ok: false, output: null, error: retryErr.message };
+      }
+    }
+  }
 
   if (!parsed) {
     // Groq returned something we can't parse — still save it so the monitor

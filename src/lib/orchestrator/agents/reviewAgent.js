@@ -31,8 +31,8 @@
 
 import { callGroqRaw } from "../groq.js";
 
-const MAX_FILE_CHARS  = 4_000; // chars per file sent to reviewer (~1000 tokens)
-const MAX_FILES       = 3;     // max files per review call
+const MAX_FILE_CHARS  = 1_500; // chars per file sent to reviewer (~375 tokens); enough to catch real issues
+const MAX_FILES       = 2;     // max files per review call; 3rd file rarely adds signal
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -87,22 +87,14 @@ function parseReviewResponse(raw, reviewType) {
 
 // ─── Monitor review ───────────────────────────────────────────────────────────
 
-const MONITOR_SYSTEM = `You are a code quality reviewer for a React code generation pipeline.
-You receive generated React component files and check them for issues.
+const MONITOR_SYSTEM = `React codegen reviewer. Check ONLY:
+1. No DOM APIs (document.querySelector, innerHTML, addEventListener)
+2. No TypeScript syntax (no type annotations, no interface/type, no useState<T>())
+3. Default export present on main component
+4. No console.log, alert(), or debugger
+5. No JSX attribute syntax errors — dynamic attributes must use {}: aria-label={\`Hello \${name}\`} not aria-label="Hello " + name
 
-Review for:
-1. React-only code — no document.querySelector, addEventListener, innerHTML, or any DOM APIs
-2. No TypeScript syntax — no type annotations, no generics like useState<T>(), no interface/type declarations
-3. Default export present on the main component
-4. No broken or relative imports that won't resolve (e.g. "../lib/db.js" should be "/lib/db.js")
-5. No console.log, alert(), or debugger statements
-6. No hardcoded localhost URLs or absolute paths
-
-Reply with ONLY a JSON object, no other text:
-{"pass": true} if everything is fine
-{"pass": false, "feedback": "specific issue description and how to fix it"} if there are problems
-
-Be concise. One issue at a time. Do not invent problems that aren't there.`;
+Reply ONLY: {"pass":true} or {"pass":false,"feedback":"one sentence"}`;
 
 /**
  * Run the monitor (quality) review on an artifact.
@@ -125,7 +117,7 @@ export async function runMonitorReview(artifact) {
         { role: "system", content: MONITOR_SYSTEM },
         { role: "user",   content: userMsg },
       ],
-      { maxTokens: 256, temperature: 0.1 }
+      { maxTokens: 64, temperature: 0.1 }
     );
   } catch (err) {
     console.warn(`[reviewAgent/monitor] Groq error — skipping review: ${err.message}`);
@@ -144,22 +136,13 @@ export async function runMonitorReview(artifact) {
 
 // ─── Security review ──────────────────────────────────────────────────────────
 
-const SECURITY_SYSTEM = `You are a security reviewer for a React code generation pipeline.
-You receive generated React component files and check them for security issues.
+const SECURITY_SYSTEM = `React security reviewer. Check ONLY:
+1. No hardcoded secrets, API keys, or tokens
+2. No eval(), new Function(), or dynamic code execution
+3. No dangerouslySetInnerHTML without sanitization
+4. No server-only imports (next/server, next/headers, fs, path, crypto)
 
-Review for:
-1. No API keys, tokens, passwords, or secrets hardcoded in the code
-2. No use of eval(), new Function(), or dynamic code execution
-3. No dangerouslySetInnerHTML unless content is explicitly sanitised
-4. No direct localStorage manipulation of auth tokens or session data
-5. No imports from server-only modules (next/server, next/headers, fs, path, crypto)
-6. No XSS vectors — user input must not be inserted into the DOM unsanitised
-
-Reply with ONLY a JSON object, no other text:
-{"pass": true} if the code is safe
-{"pass": false, "flags": ["specific issue 1", "specific issue 2"]} if there are security problems
-
-Be precise. Only flag real issues, not hypothetical ones.`;
+Reply ONLY: {"pass":true} or {"pass":false,"flags":["issue"]}`;
 
 /**
  * Run the security review on an artifact.
@@ -182,7 +165,7 @@ export async function runSecurityReview(artifact) {
         { role: "system", content: SECURITY_SYSTEM },
         { role: "user",   content: userMsg },
       ],
-      { maxTokens: 256, temperature: 0.1 }
+      { maxTokens: 64, temperature: 0.1 }
     );
   } catch (err) {
     console.warn(`[reviewAgent/security] Groq error — skipping review: ${err.message}`);

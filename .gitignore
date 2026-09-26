@@ -28,3 +28,4 @@ dist
 *.sln
 *.sw?
 .env.local
+.bob/

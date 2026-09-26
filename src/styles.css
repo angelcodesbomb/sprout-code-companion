@@ -3460,16 +3460,24 @@ button {
 }
 
 .lp-mode-btn {
-  display: grid;
-  place-items: center;
-  width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
   height: 28px;
+  padding: 0 8px;
+  white-space: nowrap;
+  font-family: var(--font-sans, system-ui);
+  font-size: 11px;
+  font-weight: 600;
   border: 1.5px solid var(--border);
-  border-radius: 8px 5px 9px 4px;
+  border-radius: 7px;
   background: var(--card);
   color: var(--muted-foreground);
   cursor: pointer;
-  transition: color 140ms, border-color 140ms, background 140ms;
+  transition: all 140ms ease;
+  user-select: none;
 }
 
 .lp-mode-btn:hover,
@@ -3545,6 +3553,14 @@ button {
 @keyframes lp-pulse {
   0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--coral) 80%, transparent); }
   50%       { box-shadow: 0 0 0 4px color-mix(in oklab, var(--coral) 30%, transparent); }
+}
+
+/* ── Review / security results panel ────────────────────────────────────── */
+.lp-review-results-wrap {
+  padding: 14px 18px 18px;
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 10px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4120,3 +4136,621 @@ button {
   color: var(--coral);
   border-color: var(--coral);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Live Preview Panel — full component stylesheet
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Outer container ──────────────────────────────────────────────────────── */
+.lp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  min-height: 0;
+}
+
+/* ── Repo context bar ─────────────────────────────────────────────────────── */
+.lp-repo-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1.5px solid var(--border);
+  background: color-mix(in oklab, var(--card) 80%, transparent);
+}
+
+.lp-repo-bar__label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+
+.lp-repo-bar__loaded {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.lp-repo-bar__name {
+  font: 600 12px var(--font-sans);
+  color: var(--foreground);
+}
+
+.lp-repo-bar__branch {
+  font: 500 11px var(--font-mono);
+  color: var(--mint);
+}
+
+.lp-repo-bar__hint {
+  font: 400 11px var(--font-sans);
+  color: var(--muted-foreground);
+}
+
+.lp-repo-bar__input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.lp-repo-bar__skip {
+  margin: 5px 0 0;
+  font: 400 11px var(--font-sans);
+  color: var(--muted-foreground);
+}
+
+/* ── Orchestrator command bar ─────────────────────────────────────────────── */
+.orch-command-bar {
+  border-bottom: 1.5px solid var(--border);
+  background: var(--card);
+}
+
+.orch-command-bar__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.orch-command-bar__prompt-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orch-command-bar__label {
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.orch-command-bar__input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.orch-command-bar__input {
+  flex: 1;
+  resize: none;
+  border: 1.5px solid var(--border);
+  border-radius: 10px 6px 11px 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 400 13px/1.5 var(--font-sans);
+  padding: 9px 12px;
+  outline: none;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+  box-shadow: 1px 2px 0 color-mix(in oklab, var(--foreground) 5%, transparent);
+}
+
+.orch-command-bar__input:focus {
+  border-color: var(--coral);
+  box-shadow: 1px 2px 0 color-mix(in oklab, var(--coral) 15%, transparent);
+}
+
+.orch-command-bar__input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.orch-command-bar__input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.orch-command-bar__run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 0 18px;
+  height: 40px;
+  border: 2px solid var(--foreground);
+  border-radius: 20px;
+  background: var(--coral);
+  color: oklch(0.18 0.01 75);
+  font: 700 12px var(--font-sans);
+  cursor: pointer;
+  box-shadow: 2px 2px 0 color-mix(in oklab, var(--foreground) 15%, transparent);
+  transition: opacity 150ms ease;
+}
+
+.orch-command-bar__run-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Pipeline step pills row */
+.orch-command-bar__pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 2px 0;
+}
+
+/* Final answer / error text */
+.orch-command-bar__answer {
+  margin: 0;
+  font: 400 12px/1.55 var(--font-sans);
+  color: var(--muted-foreground);
+  border-left: 2px solid var(--mint);
+  padding-left: 10px;
+}
+
+.orch-command-bar__error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font: 500 12px var(--font-sans);
+  color: var(--coral);
+  padding: 6px 10px;
+  border: 1.5px solid color-mix(in oklab, var(--coral) 40%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--coral) 8%, var(--card));
+}
+
+/* ── Step pills ───────────────────────────────────────────────────────────── */
+.orch-step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border: 1.5px solid color-mix(in oklab, var(--mint) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--mint) 8%, var(--card));
+  font: 600 10px var(--font-mono);
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.orch-step-pill.is-live {
+  border-color: color-mix(in oklab, var(--coral) 45%, var(--border));
+  background: color-mix(in oklab, var(--coral) 10%, var(--card));
+  color: var(--coral);
+}
+
+.orch-step-pill.is-fail {
+  border-color: color-mix(in oklab, var(--coral) 45%, var(--border));
+  background: color-mix(in oklab, var(--coral) 8%, var(--card));
+}
+
+.orch-step-pill__icon {
+  display: flex;
+  align-items: center;
+  color: var(--mint);
+}
+
+.orch-step-pill.is-live .orch-step-pill__icon,
+.orch-step-pill.is-fail .orch-step-pill__icon {
+  color: var(--coral);
+}
+
+.orch-step-pill__label {
+  letter-spacing: 0.02em;
+}
+
+/* ── Section divider ──────────────────────────────────────────────────────── */
+.lp-section-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 4px 16px;
+  color: var(--muted-foreground);
+  font: 400 10px var(--font-sans);
+}
+
+.lp-section-divider::before,
+.lp-section-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Manual task input area ───────────────────────────────────────────────── */
+.lp-input-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1.5px solid var(--border);
+  background: var(--card);
+}
+
+.lp-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.lp-task-input {
+  flex: 1;
+  resize: none;
+  border: 1.5px solid var(--border);
+  border-radius: 10px 6px 11px 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 400 13px/1.5 var(--font-sans);
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.lp-task-input:focus {
+  border-color: var(--cyan);
+}
+
+.lp-task-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.lp-task-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.lp-spec-input {
+  width: 100%;
+  resize: none;
+  border: 1.5px solid var(--border);
+  border-radius: 8px 5px 9px 5px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 400 12px/1.5 var(--font-sans);
+  padding: 7px 10px;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.lp-spec-input:focus {
+  border-color: var(--cyan);
+}
+
+.lp-spec-input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.lp-input-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.lp-spec-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: 600 10px var(--font-sans);
+  cursor: pointer;
+  transition: border-color 150ms, color 150ms;
+  white-space: nowrap;
+}
+
+.lp-spec-toggle:hover {
+  border-color: var(--cyan);
+  color: var(--foreground);
+}
+
+.lp-generate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  height: 36px;
+  border: 2px solid var(--foreground);
+  border-radius: 18px;
+  background: var(--cyan);
+  color: oklch(0.18 0.01 75);
+  font: 700 11px var(--font-sans);
+  cursor: pointer;
+  box-shadow: 2px 2px 0 color-mix(in oklab, var(--foreground) 12%, transparent);
+  transition: opacity 150ms ease;
+  white-space: nowrap;
+}
+
+.lp-generate-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── Meta / status bar ────────────────────────────────────────────────────── */
+.lp-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-bottom: 1.5px solid var(--border);
+  background: var(--card);
+  min-height: 36px;
+}
+
+.lp-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 600 10px var(--font-mono);
+  color: var(--badge-color, var(--muted-foreground));
+  background: color-mix(in oklab, var(--badge-color, var(--muted-foreground)) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--badge-color, var(--muted-foreground)) 30%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+@keyframes lp-spin {
+  to { transform: rotate(360deg); }
+}
+
+.lp-status-badge__spin {
+  animation: lp-spin 0.85s linear infinite;
+}
+
+.lp-summary {
+  font: 400 11px var(--font-sans);
+  color: var(--muted-foreground);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── View mode toolbar & tabs ────────────────────────────────────────────── */
+.lp-mode-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.lp-tab-btn,
+.lp-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 9px;
+  font-family: var(--font-sans, system-ui);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 140ms ease;
+  user-select: none;
+}
+
+.lp-tab-btn:hover,
+.lp-mode-btn:hover {
+  border-color: var(--foreground);
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+
+.lp-tab-btn.is-active,
+.lp-mode-btn.is-active {
+  border-color: var(--coral);
+  color: var(--coral);
+  background: color-mix(in oklab, var(--coral) 12%, transparent);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--coral) 15%, transparent);
+}
+
+.lp-tab-btn--review {
+  border-color: color-mix(in oklab, var(--mint) 40%, transparent);
+  color: var(--mint);
+  background: color-mix(in oklab, var(--mint) 6%, transparent);
+}
+
+.lp-tab-btn--review.is-active {
+  border-color: var(--mint);
+  color: var(--mint);
+  background: color-mix(in oklab, var(--mint) 14%, transparent);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--mint) 20%, transparent);
+}
+
+.lp-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.lp-tab-badge.is-passed {
+  background: rgba(52, 211, 153, 0.25);
+  color: #34d399;
+}
+
+.lp-tab-badge.is-flagged {
+  background: rgba(248, 113, 113, 0.25);
+  color: #f87171;
+}
+
+.lp-review-fullview {
+  min-height: 480px;
+  padding: 24px;
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Error banner ─────────────────────────────────────────────────────────── */
+.lp-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  font: 500 12px var(--font-sans);
+  color: var(--coral);
+  background: color-mix(in oklab, var(--coral) 8%, var(--card));
+  border-bottom: 1.5px solid color-mix(in oklab, var(--coral) 30%, var(--border));
+}
+
+/* ── File tabs ────────────────────────────────────────────────────────────── */
+.lp-file-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 2px;
+  padding: 5px 12px 0;
+  border-bottom: 1.5px solid var(--border);
+  background: var(--card);
+  scrollbar-width: none;
+}
+
+.lp-file-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.lp-file-tab {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border: 1.5px solid transparent;
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: 500 11px var(--font-mono);
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+}
+
+.lp-file-tab:hover {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+}
+
+.lp-file-tab.is-active {
+  border-color: var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+/* ── Sandpack wrapper ─────────────────────────────────────────────────────── */
+.lp-sandpack-wrap {
+  position: relative;
+  transition: opacity 0.25s ease;
+}
+
+.lp-sandpack-wrap.is-generating {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.lp-sandpack-wrap.is-generating::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 40px,
+    color-mix(in oklab, var(--coral) 6%, transparent) 40px,
+    color-mix(in oklab, var(--coral) 6%, transparent) 80px
+  );
+  background-size: 200% 100%;
+  animation: lp-generating-sweep 1.2s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes lp-generating-sweep {
+  from { background-position: 0% 0; }
+  to   { background-position: 200% 0; }
+}
+
+/* ── Stage container for Sandpack + Right Review Panel ───────────────────── */
+.lp-preview-stage {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.lp-preview-stage > .lp-sandpack-wrap {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+.lp-review-results-wrap {
+  width: 360px;
+  flex: 0 0 360px;
+  max-height: 570px;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--card);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+@media (max-width: 1024px) {
+  .lp-preview-stage {
+    flex-direction: column;
+  }
+  .lp-review-results-wrap {
+    width: 100%;
+    flex: 1 1 auto;
+    max-height: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Review Results Panel — hackathon demo styles
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.lp-review-results-wrap [aria-label="Review and security results"] {
+  /* gentle glow on the whole panel */
+  filter: drop-shadow(0 0 18px color-mix(in oklab, var(--mint) 8%, transparent));
+}
+

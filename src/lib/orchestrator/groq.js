@@ -9,7 +9,7 @@
  *
  * Multi-model support — each role reads its own env var:
  *   GROQ_MODEL_ORCHESTRATOR  → openai/gpt-oss-120b  (reasoning + tool-calling)
- *   GROQ_MODEL_UI            → qwen/qwen3.8-27b     (code generation, separate TPM bucket)
+ *   GROQ_MODEL_UI            → openai/gpt-oss-20b   (code generation, GPT OSS strictly)
  *   GROQ_MODEL_FILEMAP       → openai/gpt-oss-20b   (short structured outputs, 1000 t/s)
  *   GROQ_MODEL               → openai/gpt-oss-20b   (legacy fallback for any remaining route)
  *                              the tools API field; parses XML <tool_call> blocks from
@@ -27,14 +27,14 @@ export function getModel() {
 }
 
 /**
- * Model for the Review Agent — uses Qwen (fast, cheap, separate TPM bucket from orchestrator).
- * Falls back through GROQ_MODEL_UI (also Qwen) then a hard default.
+ * Model for the Review Agent — defaults to openai/gpt-oss-20b.
+ * Reads GROQ_MODEL_REVIEW then GROQ_MODEL_UI then hard default.
  */
 export function getReviewModel() {
   return (
     process.env.GROQ_MODEL_REVIEW ??
     process.env.GROQ_MODEL_UI     ??
-    "qwen/qwen3.8-27b"
+    "openai/gpt-oss-20b"
   );
 }
 
