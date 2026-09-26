@@ -6,8 +6,6 @@
 import {
   stubMapParserLoad,
   stubMapParserRefresh,
-  stubMonitorReview,
-  stubSecurityReview,
   stubLivePreviewSync,
   stubCodegenAgent,
 } from "./agents/stubs.js";
@@ -114,28 +112,6 @@ export function createOrchestratorTools(ctx) {
           : [];
         return stubCodegenAgent(ctx, "API", { ...input, routes });
       },
-    },
-    {
-      name: "monitor_review_output",
-      description: "Review a codegen artifact for best practices. Returns pass or feedback.",
-      parameters: {
-        artifactId: { type: "string", description: "Artifact id from codegen tool." },
-        forceFail:  { type: "string", description: "Set 'true' to simulate failure (testing only)." },
-      },
-      required: ["artifactId"],
-      run: (input) => stubMonitorReview(ctx, {
-        artifactId: input.artifactId,
-        forceFail: input.forceFail === "true" || input.forceFail === true,
-      }),
-    },
-    {
-      name: "security_review_output",
-      description: "Security-review a codegen artifact before push.",
-      parameters: {
-        artifactId: { type: "string", description: "Artifact id to review." },
-      },
-      required: ["artifactId"],
-      run: (input) => stubSecurityReview(ctx, input),
     },
     {
       name: "live_preview_sync",

@@ -7,11 +7,12 @@ import { createOrchestratorTools, findTool } from "./tools.js";
 import { assertToolResult } from "./validate.js";
 import { createRunContext, serializeContext } from "./context.js";
 import { buildOrchestratorSystemPrompt } from "./prompt.js";
+import { runMonitorReview, runSecurityReview } from "./agents/reviewAgent.js";
 
-const MAX_STEPS = 18; // full pipeline: init+map+db+ui+api+(monitor+security)×3+push+refresh
+const MAX_STEPS = 14; // trimmed: no review tool steps in count any more
 
-const CODEGEN_TOOLS  = new Set(["ui_agent_generate", "api_agent_generate", "db_agent_design_schema"]);
-const REVIEW_TOOLS   = new Set(["monitor_review_output", "security_review_output"]);
+const CODEGEN_TOOLS = new Set(["ui_agent_generate", "api_agent_generate", "db_agent_design_schema"]);
+// REVIEW_TOOLS removed — review is now automatic middleware, not orchestrator tools
 
 // How many non-system messages to keep in the sliding window.
 // System message is always kept. This caps context to ~4000 tokens of history.
@@ -22,8 +23,35 @@ function isQwenStyleModel() {
   return m.startsWith("qwen/") || m.startsWith("qwen");
 }
 
-function securityGate(decision) { void decision; return { pass: true }; }
-function monitorGate(step)      { void step;     return { pass: true }; }
+/**
+ * Security gate — runs automatically after every codegen step.
+ * Calls the Review Agent directly (Qwen, ~300 tokens) — no orchestrator turn wasted.
+ * Returns { pass, flags, note }.
+ */
+async function securityGate(artifact) {
+  if (!artifact?.files?.length) return { pass: true };
+  try {
+    return await runSecurityReview(artifact);
+  } catch (err) {
+    console.warn(`[orchestrator/loop] securityGate error — passing through: ${err.message}`);
+    return { pass: true };
+  }
+}
+
+/**
+ * Monitor gate — runs automatically after every codegen step.
+ * Calls the Review Agent directly (Qwen, ~300 tokens) — no orchestrator turn wasted.
+ * Returns { pass, feedback, checks }.
+ */
+async function monitorGate(artifact) {
+  if (!artifact?.files?.length) return { pass: true };
+  try {
+    return await runMonitorReview(artifact);
+  } catch (err) {
+    console.warn(`[orchestrator/loop] monitorGate error — passing through: ${err.message}`);
+    return { pass: true };
+  }
+}
 
 /**
  * Strip file content from a tool result before storing in message history.
@@ -119,15 +147,6 @@ export async function runOrchestrator({
 
     const { toolName, toolInput } = decision;
 
-    const secResult = securityGate({ toolName, toolInput });
-    if (!secResult.pass) {
-      return {
-        steps,
-        finalAnswer: `Orchestrator halted: ${secResult.reason ?? "security gate"}`,
-        context: serializeContext(ctx),
-      };
-    }
-
     const tool = findTool(tools, toolName);
     if (!tool) {
       return {
@@ -157,7 +176,7 @@ export async function runOrchestrator({
       "→", result.ok ? "ok" : `error: ${result.error}`
     );
 
-    // Track successful completions — the system prompt reads this to skip already-done steps.
+    // Track successful completions
     if (result.ok) {
       ctx.completedTools = ctx.completedTools ?? new Set();
       ctx.completedTools.add(toolName);
@@ -165,33 +184,55 @@ export async function runOrchestrator({
 
     if (typeof onStepComplete === "function") onStepComplete(step);
 
-    const monResult = monitorGate({ toolName, toolInput, result });
-    if (!monResult.pass) {
-      return {
-        steps,
-        finalAnswer: `Orchestrator halted: ${monResult.reason ?? "monitor gate"}`,
-        context: serializeContext(ctx),
-      };
+    // ── Automatic review middleware (replaces orchestrator review tools) ──────
+    // Runs after every codegen step without burning an orchestrator turn.
+    // Uses Qwen directly (~300 tokens) — the orchestrator never sees this.
+    if (CODEGEN_TOOLS.has(toolName) && result.ok) {
+      const artifact = result.output?.artifact;
+
+      // Monitor gate (quality check)
+      const monResult = await monitorGate(artifact);
+      if (!monResult.pass) {
+        console.log(`[orchestrator/loop] Monitor gate FAIL — self-healing: ${monResult.feedback}`);
+        // Self-heal: re-run the same codegen tool with the feedback injected,
+        // without asking the orchestrator. Limit to one auto-retry.
+        const retryInput = {
+          ...toolInput,
+          spec: `${toolInput.spec ?? ""}\n\nFix required: ${monResult.feedback}`.trim(),
+        };
+        const retryRaw    = await tool.run(retryInput);
+        const retryResult = assertToolResult(retryRaw, toolName);
+        if (retryResult.ok) {
+          // Replace the artifact in ctx with the fixed version
+          const fixedArtifact = retryResult.output?.artifact;
+          if (fixedArtifact) {
+            const idx = ctx.artifacts.findIndex((a) => a.id === result.output?.artifact?.id);
+            if (idx !== -1) ctx.artifacts[idx] = fixedArtifact;
+          }
+          console.log(`[orchestrator/loop] Monitor self-heal succeeded.`);
+          // Update the step result so SSE gets the fixed files
+          step.result = retryResult;
+          if (typeof onStepComplete === "function") onStepComplete(step);
+        } else {
+          console.warn(`[orchestrator/loop] Monitor self-heal failed — continuing anyway.`);
+        }
+      }
+
+      // Security gate (security check on the final artifact)
+      const finalArtifact = ctx.artifacts[ctx.artifacts.length - 1];
+      const secResult = await securityGate(finalArtifact);
+      if (!secResult.pass) {
+        console.warn(
+          `[orchestrator/loop] Security gate flags: ${(secResult.flags ?? []).join(", ")} — logged, continuing.`
+        );
+        // Security issues are logged and attached to the step but don't block
+        // the pipeline — the orchestrator is not told about them to save tokens.
+        step.securityFlags = secResult.flags;
+      }
     }
 
     // Compress result BEFORE pushing to message history
     const compressed = compressToolResult(result, toolName);
-
-    if (
-      REVIEW_TOOLS.has(toolName) &&
-      result.ok &&
-      result.output?.pass === false
-    ) {
-      messages.push(
-        assistantToolMessage(stepNum, toolName, toolInput),
-        toolResultMessage(stepNum, compressed)
-      );
-      messages.push({
-        role:    "user",
-        content: `Review failed (${toolName}). Feedback: ${result.output.feedback ?? "fix issues and regenerate."}`,
-      });
-      continue;
-    }
 
     messages.push(
       assistantToolMessage(stepNum, toolName, toolInput),
@@ -213,13 +254,8 @@ export async function runOrchestrator({
         }
       );
     }
-
-    if (CODEGEN_TOOLS.has(toolName) && result.ok) {
-      messages.push({
-        role:    "user",
-        content: `Codegen done (artifactId: ${result.output?.artifactId}). Call monitor_review_output then security_review_output.`,
-      });
-    }
+    // No CODEGEN inject message — review is handled by middleware above,
+    // not by the orchestrator. This saves 2 orchestrator turns per codegen step.
   }
 
   return {

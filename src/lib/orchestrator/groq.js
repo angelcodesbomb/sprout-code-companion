@@ -26,6 +26,52 @@ export function getModel() {
   return process.env.GROQ_MODEL_ORCHESTRATOR ?? process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
 }
 
+/**
+ * Model for the Review Agent — uses Qwen (fast, cheap, separate TPM bucket from orchestrator).
+ * Falls back through GROQ_MODEL_UI (also Qwen) then a hard default.
+ */
+export function getReviewModel() {
+  return (
+    process.env.GROQ_MODEL_REVIEW ??
+    process.env.GROQ_MODEL_UI     ??
+    "qwen/qwen3.8-27b"
+  );
+}
+
+/**
+ * Plain (non-tool-calling) Groq completion — used by the Review Agent.
+ * Sends only the messages and returns the raw text content.
+ * Uses the review model, not the orchestrator model.
+ *
+ * @param {Array<{ role: string, content: string }>} messages
+ * @param {{ maxTokens?: number, temperature?: number }} options
+ * @returns {Promise<string>}
+ */
+export async function callGroqRaw(messages, { maxTokens = 1024, temperature = 0.1 } = {}) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error("[groq] GROQ_API_KEY is not set.");
+
+  const model = getReviewModel();
+  const qwen  = isQwenModel(model);
+
+  // For Qwen, strip <think> from system and user messages to reduce noise
+  const cleanMessages = qwen
+    ? messages.map((m) => ({
+        ...m,
+        content: (m.content ?? "").replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
+      }))
+    : messages;
+
+  const data = await fetchGroqCompletion(
+    { model, messages: cleanMessages, temperature, max_tokens: maxTokens },
+    apiKey
+  );
+
+  const content = data.choices?.[0]?.message?.content ?? "";
+  // Strip Qwen think blocks from response
+  return qwen ? content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() : content;
+}
+
 /** Returns true for Qwen models which use a different tool-calling format. */
 function isQwenModel(model) {
   return model.toLowerCase().startsWith("qwen/") || model.toLowerCase().startsWith("qwen");
