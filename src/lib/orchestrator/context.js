@@ -35,20 +35,23 @@ export function compactMapSnapshot(mapSnapshot) {
  * @param {{
  *   goal: string,
  *   mapSnapshot?: object | null,
+ *   githubToken?: string | null,
  *   autoApproveHuman?: boolean,
  * }} options
  */
-export function createRunContext({ goal, mapSnapshot = null, autoApproveHuman = false }) {
+export function createRunContext({ goal, mapSnapshot = null, githubToken = null, autoApproveHuman = false }) {
   /** @type {import("./context.js").OrchestratorContext} */
   const ctx = {
     goal,
     autoApproveHuman,
+    githubToken,
     phase: "init",
     repo: null,
     mapCompact: compactMapSnapshot(mapSnapshot),
     mapSnapshot: mapSnapshot ?? null,
     pendingHumanActions: [],
     artifacts: [],
+    dbSchema: null,
     preview: { status: "idle", revision: 0, url: null },
     lastMonitor: null,
     lastSecurity: null,
@@ -60,12 +63,14 @@ export function createRunContext({ goal, mapSnapshot = null, autoApproveHuman = 
  * @typedef {{
  *   goal: string,
  *   autoApproveHuman: boolean,
+ *   githubToken: string | null,
  *   phase: string,
  *   repo: { name: string, description?: string, createdAt?: string } | null,
  *   mapCompact: object | null,
  *   mapSnapshot: object | null,
  *   pendingHumanActions: Array<{ id: string, kind: string, summary: string, payload: object }>,
  *   artifacts: Array<{ id: string, agent: string, paths: string[], summary: string }>,
+ *   dbSchema: { tables: object } | null,
  *   preview: { status: string, revision: number, url: string | null },
  *   lastMonitor: object | null,
  *   lastSecurity: object | null,
@@ -79,6 +84,7 @@ export function serializeContext(ctx) {
     mapCompact: ctx.mapCompact,
     pendingHumanActions: ctx.pendingHumanActions,
     artifacts: ctx.artifacts,
+    dbSchema: ctx.dbSchema,
     preview: ctx.preview,
     lastMonitor: ctx.lastMonitor,
     lastSecurity: ctx.lastSecurity,

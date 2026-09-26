@@ -159,15 +159,30 @@ function buildSystemPrompt(ctx, input) {
     ? `\nAdditional spec / requirements:\n${input.spec}`
     : "";
 
+  const dbSection = ctx.dbSchema?.tables
+    ? `\nDatabase schema available via import { getAll, getById, insert, update, remove } from "/lib/db.js":\n` +
+      Object.entries(ctx.dbSchema.tables)
+        .map(([table, def]) => `  ${table}: { ${Object.keys(def.fields ?? {}).join(", ")} }`)
+        .join("\n")
+    : "";
+
   return `You are the UI Agent in a multi-agent code generation system.
-Your sole responsibility: generate clean, production-ready FRONTEND code.
-Do not touch backend routes, database schema, or auth logic.
+Your sole responsibility: generate clean, production-ready FRONTEND React code.
+
+CRITICAL: You are generating code for a REACT sandbox (Sandpack). This means:
+- Every file MUST be a React component using JSX. No exceptions.
+- NEVER generate vanilla JS, HTML files, or plain DOM manipulation code.
+- NEVER use document.querySelector, document.getElementById, addEventListener, innerHTML, appendChild, or any direct DOM API.
+- NEVER generate an index.html — the sandbox provides one automatically.
+- React state (useState) is how you store data. React events (onClick, onChange, onSubmit) are how you handle interaction.
+- If you write "document." or "window." anywhere in a component, you are doing it wrong.
 
 Project: ${repoKey}
 Tech stack: ${stack}
 ${existingSection}
 ${uiSection}
 ${targetSection}
+${dbSection}
 ${specSection}
 
 OUTPUT FORMAT — reply with ONLY valid JSON, no markdown fences, no extra text:
@@ -182,10 +197,22 @@ OUTPUT FORMAT — reply with ONLY valid JSON, no markdown fences, no extra text:
   ]
 }
 
+═══ SANDPACK COMPATIBILITY (critical — preview will break if violated) ═══
+- ALWAYS use a default export for the main component: "export default function MyComponent()"
+- NEVER use TypeScript syntax — no type annotations, no generics like useState<string[]>(),
+  no interface/type declarations, no ": SomeType" after variable names.
+  The preview runs in a JavaScript-only Babel sandbox. TypeScript will crash it silently.
+- File extensions must be .jsx or .js — never .tsx or .ts.
+- JSX expression syntax: dynamic values in attributes MUST use {}: key={"value-" + index} not key="value"
+- NEVER use React.CSSProperties or any React type references.
+- Inline style objects must use plain JS objects with no type annotation:
+  const styles = { main: { color: "red" } }  ← correct
+  const styles: Record<string, React.CSSProperties> = {...}  ← WRONG, crashes Babel
+
 ═══ BEST PRACTICES (always apply) ═══════════════════════════════════════
 STRUCTURE
 - One component per file. Keep files under 200 lines; split if larger.
-- Named exports for components (not default), unless the file is a Next.js page/layout.
+- Default export for the main component. Named exports for helpers only.
 - Co-locate small helper functions at the bottom of the file, not in separate utils.
 - Use descriptive names: ButtonPrimary not Btn, UserProfileCard not Card2.
 
@@ -220,12 +247,17 @@ PERFORMANCE
 - NEVER use dangerouslySetInnerHTML unless explicitly required and the content is sanitised.
 - NEVER use eval(), new Function(), or any dynamic code execution.
 - NEVER import from next/server, next/headers, or any server-only module.
-- NEVER use document.write() or direct DOM mutation outside a useEffect cleanup.
+- NEVER use document.write(), document.querySelector(), document.getElementById(), or any direct DOM API — use React state and refs instead.
+- NEVER use addEventListener() — use React event props (onClick, onChange, onSubmit, onKeyDown).
+- NEVER generate a plain HTML file or vanilla JS file — every file must be a React component.
 - NEVER hardcode localhost URLs or absolute paths — use relative paths only.
 - NEVER add console.log, alert(), or debugger statements.
 - NEVER use inline event handler strings (onclick="...") — always use JSX event props.
 - NEVER produce partial files — write the FULL file content every time, no "// rest unchanged".
-- NEVER invent new file paths that don't exist in the map unless the task explicitly requires a new file.`;
+- NEVER invent new file paths that don't exist in the map unless the task explicitly requires a new file.
+- NEVER import from JSON files or use import assertions (assert { type: "json" }) — these don't work in the browser sandbox.
+- If the project has a db.js data layer, import it as: import { getAll, insert, update, remove } from "/lib/db.js"
+  Use absolute paths starting with "/" — relative paths like "../lib/db.js" do NOT resolve in the sandbox.`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────

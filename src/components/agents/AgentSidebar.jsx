@@ -6,8 +6,13 @@ import {
 import { PIPELINE_AGENTS, resolveLiveAgentName, toolToDisplayAgent } from "@/lib/orchestrator/agentDisplay";
 
 const agentIcons = {
-  UI: AppWindow, Database, API: Braces,
-  Review: ScanSearch, Security: ShieldCheck, Validation: BadgeCheck,
+  GitHub: GitBranch,
+  UI: AppWindow,
+  Database,
+  API: Braces,
+  Review: ScanSearch,
+  Security: ShieldCheck,
+  Validation: BadgeCheck,
 };
 
 const exploreItems = [

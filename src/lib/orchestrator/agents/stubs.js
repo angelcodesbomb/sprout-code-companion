@@ -94,20 +94,18 @@ export async function stubMapParserLoad(ctx, input) {
     ctx.mapSnapshot = input.mapSnapshot;
     ctx.mapCompact = compactMapSnapshot(input.mapSnapshot);
   }
-  if (!ctx.mapCompact && !ctx.mapSnapshot) {
-    return {
-      ok: false,
-      output: null,
-      error: "No map in context. Pass mapSnapshot or load a repo in the workspace first.",
-    };
-  }
+  // Building from scratch is valid — no map is fine, agents handle null mapSnapshot.
+  // Only report what we have (or nothing) and move on.
   ctx.phase = "map_loaded";
   return {
     ok: true,
     output: {
-      status: "map_loaded",
-      map: ctx.mapCompact,
+      status: ctx.mapCompact ? "map_loaded" : "no_map_scratch_mode",
+      map: ctx.mapCompact ?? null,
       source: input.source ?? "cache",
+      note: ctx.mapCompact
+        ? null
+        : "No repo map loaded — building from scratch. Agents will generate new files.",
     },
     error: null,
   };
