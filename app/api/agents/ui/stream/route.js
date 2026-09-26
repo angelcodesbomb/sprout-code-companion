@@ -1,7 +1,7 @@
 import { createRunContext } from "@/lib/orchestrator/context.js";
-import { getModel } from "@/lib/orchestrator/groq.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+const UI_MODEL = process.env.GROQ_MODEL_UI || "qwen/qwen3.8-27b";
 
 /**
  * POST /api/agents/ui/stream
@@ -69,7 +69,7 @@ export async function POST(request) {
             Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
           },
           body: JSON.stringify({
-            model: getModel(),
+            model: UI_MODEL,
             stream: true,
             temperature: 0.2,
             max_tokens: 6000,

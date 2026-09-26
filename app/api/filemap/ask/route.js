@@ -6,7 +6,7 @@ import {
 } from "@/lib/repoMapAsk";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const MODEL = process.env.GROQ_MODEL_FILEMAP || "openai/gpt-oss-20b";
 
 function parseModelJson(text) {
   const trimmed = text.trim();

@@ -4,13 +4,14 @@
  * Thin wrapper around Groq's OpenAI-compatible chat completions endpoint.
  * Supports tool-calling (parallel_tool_calls disabled so the model picks exactly one tool).
  *
- * Model is read from process.env.GROQ_MODEL.
- * Default: "llama-3.3-70b-versatile"  (tool-calling capable, free tier)
+ * Model is read from process.env.GROQ_MODEL_ORCHESTRATOR.
+ * Default: "openai/gpt-oss-120b"  (tool-calling capable, 250K TPM free tier)
  *
- * Multi-model support:
- *   llama-3.3-70b-versatile  — standard OpenAI tool-calling format (default)
- *   openai/gpt-oss-*         — OpenAI format but may inject built-in tools (guarded)
- *   qwen/*                   — sends tools as JSON schema in system prompt instead of
+ * Multi-model support — each role reads its own env var:
+ *   GROQ_MODEL_ORCHESTRATOR  → openai/gpt-oss-120b  (reasoning + tool-calling)
+ *   GROQ_MODEL_UI            → qwen/qwen3.8-27b     (code generation, separate TPM bucket)
+ *   GROQ_MODEL_FILEMAP       → openai/gpt-oss-20b   (short structured outputs, 1000 t/s)
+ *   GROQ_MODEL               → openai/gpt-oss-20b   (legacy fallback for any remaining route)
  *                              the tools API field; parses XML <tool_call> blocks from
  *                              the response content. Fully transparent to callers.
  *
@@ -22,7 +23,7 @@
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 
 export function getModel() {
-  return process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
+  return process.env.GROQ_MODEL_ORCHESTRATOR ?? process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
 }
 
 /** Returns true for Qwen models which use a different tool-calling format. */

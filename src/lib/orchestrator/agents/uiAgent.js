@@ -37,9 +37,9 @@
  */
 
 import { uid } from "../context.js";
-import { getModel } from "../groq.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+const UI_MODEL = process.env.GROQ_MODEL_UI || "qwen/qwen3.8-27b";
 
 // ─── Groq call ────────────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ async function callGroq(messages, maxTokens = 4096) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: getModel(),
+        model: UI_MODEL,
         messages,
         temperature: 0.25,    // low temp = consistent, predictable code
         max_tokens: maxTokens,
