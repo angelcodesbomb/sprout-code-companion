@@ -5,7 +5,7 @@
  * Supports tool-calling (parallel_tool_calls disabled so the model picks exactly one tool).
  *
  * Model is read from process.env.GROQ_MODEL.
- * Default: "openai/gpt-oss-120b"  (tool-calling capable, free tier)
+ * Default: "llama-3.3-70b-versatile"  (tool-calling capable, free tier)
  *
  * DO NOT hardcode a model string anywhere else in the codebase.
  * Always import getModel() or GROQ_MODEL from this file so a swap is a
@@ -25,7 +25,7 @@ const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
  * @returns {string}
  */
 export function getModel() {
-  return process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
+  return process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
 }
 
 /**
@@ -62,6 +62,7 @@ async function fetchGroqCompletion(body, apiKey, attempt = 0) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000), // 60s — generous for cold starts + large prompts
   });
 
   if (res.status === 429 && attempt < 4) {
