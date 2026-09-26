@@ -44,7 +44,11 @@ function detectExportStyle(content, componentName) {
 function buildAppJs(generatedFiles) {
   const entries = Object.entries(generatedFiles).filter(([p]) => {
     const name = p.split("/").pop().replace(/\.[^.]+$/, "");
-    return /^[A-Z]/.test(name) && !name.toLowerCase().includes("index");
+    return (
+      /^[A-Z]/.test(name) &&
+      name.toLowerCase() !== "app" &&        // never import App into App
+      !name.toLowerCase().includes("index")
+    );
   });
   if (!entries.length) return null;
 
