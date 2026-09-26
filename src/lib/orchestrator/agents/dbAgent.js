@@ -39,11 +39,12 @@
 import { uid } from "../context.js";
 
 const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
-const DB_MODEL = process.env.GROQ_MODEL_FILEMAP || "openai/gpt-oss-20b";
+// DB agent needs the smarter model — schema design + valid JSON output is harder than summarization
+const DB_MODEL = process.env.GROQ_MODEL_ORCHESTRATOR || "openai/gpt-oss-120b";
 
 // ─── Groq call ────────────────────────────────────────────────────────────────
 
-async function callGroq(messages, maxTokens = 6000) {
+async function callGroq(messages, maxTokens = 4000) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("[db-agent] GROQ_API_KEY is not set.");
 
@@ -58,9 +59,10 @@ async function callGroq(messages, maxTokens = 6000) {
       body: JSON.stringify({
         model: DB_MODEL,
         messages,
-        temperature: 0.2,
+        temperature: 0.1,   // lower = more deterministic JSON output
         max_tokens: maxTokens,
       }),
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (res.status === 429) {
@@ -138,87 +140,55 @@ function extractEntityHintsFromArtifacts(artifacts) {
   return [...hints].slice(0, 8);
 }
 
-/**
- * Pull all file paths from the map for "don't invent paths" guidance.
- */
-function getAllPaths(mapSnapshot) {
-  if (!mapSnapshot?.nodesByPath) return [];
-  return Object.keys(mapSnapshot.nodesByPath)
-    .filter((p) => mapSnapshot.nodesByPath[p]?.type === "file")
-    .slice(0, 60);
-}
-
 // ─── Prompt builder ───────────────────────────────────────────────────────────
 
 function buildSystemPrompt(ctx, input) {
   const ts          = usesTypeScript(ctx.mapSnapshot);
-  const dbPaths     = getDbPaths(ctx.mapSnapshot);
-  const allPaths    = getAllPaths(ctx.mapSnapshot);
-  const entityHints = extractEntityHintsFromArtifacts(ctx.artifacts);
+  const dbPaths     = getDbPaths(ctx.mapSnapshot);   // max 20, existing DB files only
+  const entityHints = extractEntityHintsFromArtifacts(ctx.artifacts); // max 8 entity names
   const repoKey     = ctx.mapCompact?.repoKey ?? ctx.repo?.name ?? "unknown repo";
 
   const existingDbSection = dbPaths.length
-    ? `\nExisting database files in the repo (respect these, don't duplicate):\n${dbPaths.join("\n")}`
+    ? `\nExisting DB files (don't duplicate):\n${dbPaths.join("\n")}`
     : "";
 
   const entitySection = entityHints.length
-    ? `\nEntity hints inferred from UI code already generated:\n${entityHints.map((e) => `- ${e}`).join("\n")}`
-    : "";
-
-  const pathsSection = allPaths.length
-    ? `\nAll known repo file paths (use existing paths where possible):\n${allPaths.join("\n")}`
+    ? `\nEntity hints from UI code: ${entityHints.join(", ")}`
     : "";
 
   const existingSchemaSection = ctx.dbSchema
-    ? `\nExisting schema already in context (extend or update, do not discard):\n${JSON.stringify(ctx.dbSchema, null, 2)}`
+    ? `\nExtend this schema (don't discard):\n${JSON.stringify(ctx.dbSchema)}`
     : "";
 
   const tsNote = ts
-    ? "The project uses TypeScript — include lib/db.types.ts with full type definitions."
-    : "The project uses JavaScript — do NOT generate .ts files.";
+    ? "Project uses TypeScript — include lib/db.types.ts."
+    : "Project uses JavaScript — no .ts files.";
 
-  return `You are the Database Agent in a multi-agent code generation system.
-Your sole responsibility: design a minimal, self-contained local data layer for the project.
-This layer must work with ZERO external dependencies — no Prisma, no SQLite, no pg, no mongodb, no fetch calls.
-All data lives in JSON files on disk, loaded at startup into memory.
+  return `You are the Database Agent. Design a minimal local data layer.
+No external DB packages. No env vars. No Node-only APIs. Must work in a browser sandbox.
 
-Project: ${repoKey}
-${tsNote}
-${existingDbSection}
-${entitySection}
-${pathsSection}
-${existingSchemaSection}
+Project: ${repoKey}. ${tsNote}
+${existingDbSection}${entitySection}${existingSchemaSection}
 
-═══ FILES TO GENERATE ══════════════════════════════════════════════════
-Generate EXACTLY these files (adjust paths if equivalents already exist in the repo):
+Generate EXACTLY these files:
 
-1. db/schema.json
-   The canonical schema definition. Shape:
-   {
-     "tables": {
-       "<tableName>": {
-         "fields": {
-           "<fieldName>": { "type": "string|number|boolean|date|id", "required": true|false }
-         },
-         "relations": {
-           "<fieldName>": { "table": "<otherTable>", "cardinality": "one|many" }
-         }
-       }
-     }
-   }
+1. db/schema.json — schema definition:
+{"tables":{"<name>":{"fields":{"<field>":{"type":"string|number|boolean|date|id","required":true}},"relations":{}}}}
 
-2. db/seed.json
-   Realistic seed data for every table. Shape: { "<tableName>": [ ...records ] }
-   - 8–15 records per table minimum.
-   - Every "id" field must be a unique string (use "1", "2", etc.).
-   - Foreign key fields must reference real ids from the related seed table.
-   - Use realistic names, dates, and values — not "foo", "bar", "test".
+2. db/seed.json — {"<table>":[...8-12 realistic records each, unique string ids, real values]}
 
-3. lib/db.js  (or lib/db.ts if TypeScript)
-   A localStorage-backed store that works in both a browser sandbox (Sandpack preview)
-   and a real app running on localhost. No file imports — seed data is inlined as a JS object.
+3. lib/db.js — localStorage-backed singleton store. MUST:
+- Inline ALL seed data as SEED_DATA constant (no file imports)
+- STORAGE_KEY = "sprout_db"
+- loadDb(): JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? deepClone(SEED_DATA)
+- saveDb(db): localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+- let _db = loadDb() at module level
+- export getAll(table), getById(table,id), insert(table,record), update(table,id,patch), remove(table,id), reset()
+- Pure ES module syntax. No console.log. No Node APIs.
 
-   EXACT PATTERN TO FOLLOW (write the actual code, not this pseudocode):
+Output ONLY valid JSON, no markdown:
+{"summary":"one sentence","schema":{...},"files":[{"path":"...","action":"create","content":"..."}]}`;
+}   EXACT PATTERN TO FOLLOW (write the actual code, not this pseudocode):
    - Declare a SEED_DATA constant with all tables and 8-15 records each (copy from db/seed.json exactly)
    - STORAGE_KEY = "sprout_db_<projectname>" (unique per project)
    - loadDb(): tries JSON.parse(localStorage.getItem(STORAGE_KEY)), falls back to deep clone of SEED_DATA
@@ -328,8 +298,7 @@ export async function runDbAgent(ctx, input) {
       [
         { role: "system", content: system },
         { role: "user",   content: userMsg },
-      ],
-      6000
+      ]
     );
   } catch (err) {
     return { ok: false, output: null, error: err.message };
