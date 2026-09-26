@@ -1,15 +1,12 @@
 "use client";
 
 /**
- * FileMapGraph.js  — D3 radial node-link diagram for Sprout.
+ * FileMapGraph.js  — D3 architecture tree diagram for Sprout.
  *
  * Architecture notes (why things are done this way):
  *
- * 1. Nodes use translate(x,y) in CARTESIAN space (converted from polar after
- *    d3.cluster), NOT the rotate(deg)+translate(r,0) idiom. This avoids the
- *    CSS transform-origin conflict where `transform: scale(0)` in a keyframe
- *    and `transform="rotate(...)"` on the SVG element fight each other and
- *    collapse all nodes to the origin.
+ * 1. Nodes use translate(x,y) in CARTESIAN space from d3.tree. Keeping the
+ *    coordinates explicit makes the diagram readable at every zoom level.
  *
  * 2. Tooltip state is managed entirely in React (not appended via D3) so it
  *    survives React re-renders without D3 touching the same DOM nodes.
@@ -40,10 +37,13 @@ import { FileMapNodePanel } from "./FileMapNodePanel";
 const PROGRESSIVE_THRESHOLD = 150;
 const SIZE_WARN_THRESHOLD   = 500;
 const CANVAS_H = 620;
-const MARGIN   = 60;
-
-const R_BY_DEPTH = [22, 13, 10, 8, 6, 5];
-const nodeR = (depth) => R_BY_DEPTH[Math.min(depth, R_BY_DEPTH.length - 1)];
+const NODE_GAP_X = 154;
+const NODE_GAP_Y = 112;
+const ROOT_W = 168;
+const ROOT_H = 44;
+const FOLDER_W = 142;
+const FOLDER_H = 42;
+const FILE_R = 14;
 
 const TONES = ["coral", "mint", "cyan", "pink"];
 
@@ -105,40 +105,27 @@ function collapseBelow(node, minDepth, cur = 0) {
   node.children.forEach((c) => collapseBelow(c, minDepth, cur + 1));
 }
 
-function polar2cart(angle, r) {
-  return { x: Math.cos(angle - Math.PI / 2) * r, y: Math.sin(angle - Math.PI / 2) * r };
-}
-
 // ─── Dep-edge path generator ──────────────────────────────────────────────────
 
 /**
- * Draw a dep edge as a slightly-offset cubic Bézier so it doesn't exactly
- * overlap with the structural containment lines that share the same endpoint.
- * The offset is perpendicular to the chord, giving a gentle arc.
+ * Draw dependency edges as orthogonal routes so they remain distinct from
+ * the hierarchy lines and preserve the direction of an import relationship.
  */
 function depEdgePath(sx, sy, tx, ty) {
-  const mx = (sx + tx) / 2;
-  const my = (sy + ty) / 2;
-  // Perpendicular offset — 18% of chord length, always curving "outward"
-  const dx = tx - sx;
-  const dy = ty - sy;
-  const len = Math.sqrt(dx * dx + dy * dy) || 1;
-  const perp = 0.18;
-  const cx = mx - dy * perp;
-  const cy = my + dx * perp;
-  return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`;
+  const midY = sy + (ty - sy) * 0.5;
+  return `M${sx},${sy} V${midY} H${tx} V${ty}`;
 }
 
 // ─── Skeleton & empty states ──────────────────────────────────────────────────
 
-const GHOST_POS = ["root", "mid-left", "mid-right", "low-left", "low-center", "low-right"];
+const GHOST_POS = ["root", "branch-left", "branch-right", "leaf-left", "leaf-center", "leaf-right"];
 
 function SkeletonCanvas() {
   return (
     <div className="file-map-skeleton" aria-label="Loading…" aria-busy="true">
       <svg className="map-connectors" viewBox="0 0 1000 590" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M500 105V175M500 175H245V245M500 175H755V245M245 315V390M245 390H115V470M245 390H380V470M755 315V470" />
-        <circle cx="500" cy="175" r="6" /><circle cx="245" cy="390" r="6" />
+        <path d="M500 105V170M500 170H250V260M500 170H750V260M250 302V390M250 390H125V500M250 390H375V500M750 302V500" />
+        <circle cx="500" cy="170" r="6" /><circle cx="250" cy="390" r="6" />
       </svg>
       {GHOST_POS.map((p) => <div key={p} className={`file-node-ghost file-node-ghost--${p} skeleton-shimmer`} />)}
     </div>
