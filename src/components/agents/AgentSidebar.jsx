@@ -1,20 +1,19 @@
 import { motion } from "motion/react";
-import { AppWindow, Database, Braces, ScanSearch, ShieldCheck, BadgeCheck, GitBranch, Code2 } from "lucide-react";
-import { OrchestratorStatus } from "../OrchestratorStatus";
-import { PIPELINE_AGENTS, resolveLiveAgentName } from "@/lib/orchestrator/agentDisplay";
+import {
+  AppWindow, Database, Braces, ScanSearch, ShieldCheck, BadgeCheck,
+  GitBranch, Code2, Layers,
+} from "lucide-react";
+import { PIPELINE_AGENTS, resolveLiveAgentName, toolToDisplayAgent } from "@/lib/orchestrator/agentDisplay";
 
 const agentIcons = {
-  UI: AppWindow,
-  Database,
-  API: Braces,
-  Review: ScanSearch,
-  Security: ShieldCheck,
-  Validation: BadgeCheck,
+  UI: AppWindow, Database, API: Braces,
+  Review: ScanSearch, Security: ShieldCheck, Validation: BadgeCheck,
 };
 
 const exploreItems = [
-  { id: "map", label: "File Map", Icon: GitBranch },
-  { id: "code", label: "Explain Code", Icon: Code2 },
+  { id: "build", label: "Build",        Icon: Layers    },
+  { id: "map",   label: "File Map",     Icon: GitBranch },
+  { id: "code",  label: "Explain Code", Icon: Code2     },
 ];
 
 export function AgentSidebar({
@@ -22,18 +21,18 @@ export function AgentSidebar({
   onAgentSelect,
   activeView,
   onViewSelect,
-  orchStatus,
-  orchSteps,
-  orchCurrentTool,
-  orchFinalAnswer,
-  orchError,
-  onOrchestratorRun,
+  orchStatus    = "idle",
+  orchSteps     = [],
+  orchCurrentTool = null,
 }) {
   const liveAgentName = resolveLiveAgentName(orchSteps, orchCurrentTool, orchStatus);
+  const isRunning     = orchStatus === "running";
 
   return (
     <aside className="agent-sidebar" aria-label="Sidebar navigation">
-      <span className="agent-sidebar__label">EXPLORE CODE</span>
+
+      {/* ── Explore / navigate section ──────────────────────────────────── */}
+      <span className="agent-sidebar__label">NAVIGATE</span>
       <div className="agent-sidebar__list">
         {exploreItems.map(({ id, label, Icon }) => (
           <button
@@ -54,19 +53,19 @@ export function AgentSidebar({
 
       <div className="agent-sidebar__divider" aria-hidden="true" />
 
-      <OrchestratorStatus
-        status={orchStatus}
-        steps={orchSteps}
-        currentTool={orchCurrentTool}
-        finalAnswer={orchFinalAnswer}
-        error={orchError}
-        onRun={onOrchestratorRun}
-      />
-
-      <span className="agent-sidebar__label">AGENTS</span>
+      {/* ── Pipeline agents ────────────────────────────────────────────── */}
+      <span className="agent-sidebar__label">
+        AGENTS
+        {isRunning && (
+          <span className="agent-sidebar__running-badge" aria-label="Orchestrator running">
+            <span className="agent-sidebar__running-dot" />
+            running
+          </span>
+        )}
+      </span>
       <div className="agent-sidebar__list">
         {PIPELINE_AGENTS.map((agent) => {
-          const Icon = agentIcons[agent.name] || Braces;
+          const Icon   = agentIcons[agent.name] || Braces;
           const isLive = liveAgentName === agent.name;
           return (
             <button
@@ -90,6 +89,7 @@ export function AgentSidebar({
           );
         })}
       </div>
+
     </aside>
   );
 }

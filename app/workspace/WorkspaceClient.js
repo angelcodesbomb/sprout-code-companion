@@ -8,9 +8,6 @@ import { useRepoMapSummarize } from "@/hooks/useRepoMapSummarize";
 import { useRepoDependencies } from "@/hooks/useRepoDependencies";
 import { RepoMapProvider } from "@/context/RepoMapContext";
 
-// ── Static mock data (agents + code explainer) ────────────────────────────────
-// These remain unchanged — only the `files` data is now driven by real GitHub data.
-
 const codeBlocks = [
   {
     id: "imports",
@@ -54,17 +51,18 @@ const codeBlocks = [
   },
 ];
 
-// ── WorkspaceClient ───────────────────────────────────────────────────────────
-
 export default function WorkspaceClient() {
   const [isDark, setIsDark] = useState(false);
 
-  // ── Orchestrator state ───────────────────────────────────────────────────
-  const [orchStatus,      setOrchStatus]      = useState("idle");   // "idle"|"running"|"done"|"error"
+  // ── Orchestrator state ──────────────────────────────────────────────────
+  const [orchStatus,      setOrchStatus]      = useState("idle");
   const [orchSteps,       setOrchSteps]       = useState([]);
   const [orchCurrentTool, setOrchCurrentTool] = useState(null);
   const [orchFinalAnswer, setOrchFinalAnswer] = useState(null);
   const [orchError,       setOrchError]       = useState(null);
+
+  // ── Files emitted by ui_agent_generate → fed into Sandpack ─────────────
+  const [orchFiles,       setOrchFiles]       = useState(null);   // null | { files, summary, artifactId }
 
   const handleOrchestratorRun = useCallback(async (goal, options = {}) => {
     setOrchStatus("running");
@@ -72,6 +70,7 @@ export default function WorkspaceClient() {
     setOrchCurrentTool(null);
     setOrchFinalAnswer(null);
     setOrchError(null);
+    // Don't reset orchFiles here — keep previous preview visible until new ones arrive
 
     try {
       const res = await fetch("/api/orchestrator", {
@@ -112,26 +111,28 @@ export default function WorkspaceClient() {
 
         for (const chunk of chunks) {
           const lines = chunk.split("\n");
-          let event = "message";
-          let dataStr = "";
+          let event = "message", dataStr = "";
           for (const line of lines) {
-            if (line.startsWith("event: ")) event = line.slice(7);
-            else if (line.startsWith("data: ")) dataStr = line.slice(6);
+            if (line.startsWith("event: "))     event   = line.slice(7).trim();
+            else if (line.startsWith("data: ")) dataStr = line.slice(6).trim();
           }
           if (!dataStr) continue;
 
           let data;
-          try {
-            data = JSON.parse(dataStr);
-          } catch {
-            continue;
-          }
+          try { data = JSON.parse(dataStr); } catch { continue; }
 
           if (event === "tool_start") {
             setOrchCurrentTool(data.toolName ?? null);
           } else if (event === "step") {
             setOrchSteps((prev) => [...prev, data]);
             setOrchCurrentTool(null);
+          } else if (event === "ui_files") {
+            // UI agent just finished — push files into Sandpack immediately
+            setOrchFiles({
+              files:      data.files      ?? [],
+              summary:    data.summary    ?? "",
+              artifactId: data.artifactId ?? null,
+            });
           } else if (event === "done") {
             setOrchSteps(data.steps ?? []);
             setOrchFinalAnswer(data.finalAnswer ?? null);
@@ -151,48 +152,31 @@ export default function WorkspaceClient() {
   }, []);
 
   // GitHub repo state
-  const [repoTree, setRepoTree] = useState(null);    // null = nothing loaded yet
-  const [repoMeta, setRepoMeta] = useState(null);    // { owner, repo, branch, fullName, ... }
-  const [repoMap, setRepoMap] = useState(null);
-
-  const runOrchestratorWithContext = useCallback(
-    (goal) =>
-      handleOrchestratorRun(goal, {
-        mapSnapshot: repoMap,
-        autoApproveHuman: true,
-      }),
-    [handleOrchestratorRun, repoMap]
-  );
+  const [repoTree, setRepoTree] = useState(null);
+  const [repoMeta, setRepoMeta] = useState(null);
+  const [repoMap,  setRepoMap]  = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const {
-    requestSummary,
-    requestNodeDetail,
-    getDescriptionForPath,
-    getDomainForPath,
-    getPointersForPath,
-    getRoleForPath,
-    getWorkflowForPath,
-  } = useRepoMapSummarize(repoMap, setRepoMap);
+  const runOrchestratorWithContext = useCallback(
+    (goal) => handleOrchestratorRun(goal, { mapSnapshot: repoMap, autoApproveHuman: true }),
+    [handleOrchestratorRun, repoMap]
+  );
 
   const {
-    edges: depEdges,
-    edgesByPath: depEdgesByPath,
-    status: depStatus,
-  } = useRepoDependencies(repoMeta, repoMap);
+    requestSummary, requestNodeDetail,
+    getDescriptionForPath, getDomainForPath,
+    getPointersForPath, getRoleForPath, getWorkflowForPath,
+  } = useRepoMapSummarize(repoMap, setRepoMap);
+
+  const { edges: depEdges, edgesByPath: depEdgesByPath, status: depStatus } =
+    useRepoDependencies(repoMeta, repoMap);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
     return () => document.documentElement.classList.remove("dark");
   }, [isDark]);
 
-  /**
-   * Called by RepoInput when the GitHub API returns successfully.
-   * @param {Array}  flatItems  Raw flat item array from GitHub's tree API
-   * @param {object} meta       { owner, repo, branch, fullName, truncated }
-   */
   function handleRepoLoad(flatItems, meta) {
-    // Convert the flat GitHub tree response to a nested structure
     const tree = parseGithubTree(flatItems);
     setRepoTree(tree);
     setRepoMeta(meta);
@@ -202,7 +186,6 @@ export default function WorkspaceClient() {
 
   function handleLoadStart() {
     setIsLoading(true);
-    // Clear previous data so the skeleton shows cleanly
     setRepoTree(null);
     setRepoMeta(null);
     setRepoMap(null);
@@ -237,6 +220,7 @@ export default function WorkspaceClient() {
         orchCurrentTool={orchCurrentTool}
         orchFinalAnswer={orchFinalAnswer}
         orchError={orchError}
+        orchFiles={orchFiles}
         onOrchestratorRun={runOrchestratorWithContext}
       />
     </RepoMapProvider>
