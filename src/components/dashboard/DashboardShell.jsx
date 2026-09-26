@@ -11,6 +11,7 @@ import { RepoMapCopyBar } from "../filemap/RepoMapCopyBar";
 import { RepoMapAskBar } from "../filemap/RepoMapAskBar";
 import { CodeExplainer } from "../editor/CodeExplainer";
 import { LivePreviewPanel } from "../preview/LivePreviewPanel";
+import { HistorySidebar } from "../history/HistorySidebar";
 
 export function DashboardShell({
   files,
@@ -29,8 +30,13 @@ export function DashboardShell({
   orchCurrentTool,
   orchFinalAnswer,
   orchError,
-  orchFiles,          // ← { files, summary, artifactId } | null — from ui_agent_generate
+  orchFiles,
   onOrchestratorRun,
+  // ── History sidebar props ─────────────────────────────────────────────
+  historyRuns       = [],
+  onDeleteRun,
+  onClearHistory,
+  onReplayGoal,
 }) {
   const [view, setView] = useState("build"); // default to build so orchestrator is front-and-centre
   const [activeAgent, setActiveAgent] = useState(null);
@@ -175,6 +181,7 @@ export function DashboardShell({
               {view === "build" ? (
                 <LivePreviewPanel
                   repoMap={null}
+                  repoMeta={repoMeta}
                   isDark={isDark}
                   orchFiles={orchFiles}
                   orchStatus={orchStatus}
@@ -183,6 +190,9 @@ export function DashboardShell({
                   orchFinalAnswer={orchFinalAnswer}
                   orchError={orchError}
                   onOrchestratorRun={onOrchestratorRun}
+                  onRepoLoad={onRepoLoad}
+                  onLoadStart={onLoadStart}
+                  isLoadingRepo={isLoadingFiles}
                 />
               ) : view === "map" ? (
                 <>
@@ -238,6 +248,16 @@ export function DashboardShell({
             </motion.div>
           </AnimatePresence>
         </div>
+
+        <HistorySidebar
+          runs={historyRuns}
+          currentSteps={orchSteps}
+          currentGoal=""
+          orchStatus={orchStatus}
+          onDeleteRun={onDeleteRun}
+          onClearAll={onClearHistory}
+          onReplayGoal={onReplayGoal}
+        />
       </div>
     </main>
   );

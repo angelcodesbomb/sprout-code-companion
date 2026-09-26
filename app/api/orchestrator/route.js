@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runOrchestrator } from "@/lib/orchestrator/loop.js";
+import { getSession } from "@/lib/auth.js";
 
 /**
  * POST /api/orchestrator
@@ -24,6 +25,12 @@ export async function POST(request) {
     return NextResponse.json({ error: "GROQ_API_KEY is not configured." }, { status: 500 });
   }
 
+  // Resolve the GitHub token from the signed-in session (or fall back to env var).
+  // This is passed into the run context so the GitHub Agent can authenticate
+  // without calling getSession() itself (which requires next/headers).
+  const session = await getSession();
+  const githubToken = session?.accessToken ?? process.env.GITHUB_TOKEN ?? null;
+
   if (stream) {
     const encoder = new TextEncoder();
     const readable = new ReadableStream({
@@ -38,23 +45,23 @@ export async function POST(request) {
           const result = await runOrchestrator({
             goal,
             mapSnapshot,
+            githubToken,
             autoApproveHuman: Boolean(autoApproveHuman),
             onToolStart: (toolName) => send("tool_start", { toolName }),
             onStepComplete: (step) => {
               send("step", step);
 
-              // When the UI agent completes, immediately emit the generated files
-              // so the client can push them into Sandpack without waiting for "done".
-              if (
-                step.toolName === "ui_agent_generate" &&
-                step.result?.ok &&
-                Array.isArray(step.result?.output?.artifact?.files)
-              ) {
+              // Emit generated files immediately for any codegen agent so the
+              // client can update Sandpack without waiting for the "done" event.
+              // Covers: ui_agent_generate, api_agent_generate, db_agent_design_schema
+              const files = step.result?.output?.artifact?.files;
+              if (step.result?.ok && Array.isArray(files) && files.length > 0) {
                 const { artifact } = step.result.output;
                 send("ui_files", {
                   artifactId: artifact.id,
                   summary:    artifact.summary ?? "",
-                  files:      artifact.files,   // [{path, content, action}]
+                  agent:      artifact.agent   ?? step.agent ?? step.toolName,
+                  files,   // [{path, content, action}]
                 });
               }
             },
@@ -80,7 +87,7 @@ export async function POST(request) {
 
   // Non-streaming fallback
   try {
-    const result = await runOrchestrator({ goal, mapSnapshot, autoApproveHuman: Boolean(autoApproveHuman) });
+    const result = await runOrchestrator({ goal, mapSnapshot, githubToken, autoApproveHuman: Boolean(autoApproveHuman) });
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/orchestrator] runOrchestrator failed:", err);

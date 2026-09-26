@@ -5,13 +5,15 @@ import {
   SandpackProvider,
   SandpackPreview,
   SandpackCodeEditor,
+  SandpackConsole,
   SandpackLayout,
 } from "@codesandbox/sandpack-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Play, Loader2, AlertCircle, Code2, Eye, Trash2, Sparkles,
-  Send, CheckCircle2, XCircle,
+  Send, CheckCircle2, XCircle, GitBranch, Terminal,
 } from "lucide-react";
+import { RepoInput } from "../filemap/RepoInput";
 
 // ─── Sandpack scaffold ────────────────────────────────────────────────────────
 
@@ -33,44 +35,66 @@ const PLACEHOLDER_APP = `export default function App() {
 
 // ─── Export-style detection ───────────────────────────────────────────────────
 
-function detectExportStyle(content, componentName) {
-  if (new RegExp(`export\\s+default\\s+(?:function|class)\\s+${componentName}[\\s({]`).test(content)) return "default";
-  if (new RegExp(`export\\s+default\\s+${componentName}\\s*[;\\n]`).test(content)) return "default";
-  if (new RegExp(`export\\s+(?:function|class|const|let|var)\\s+${componentName}[\\s({=]`).test(content)) return "named";
-  if (/export\s+default/.test(content)) return "default";
+function detectExportStyle(content) {
+  if (/export\s+default\s+(?:function|class|(?:async\s+)?(?:function\s*\*?)?\w)/.test(content)) return "default";
   return "named";
 }
 
+/**
+ * Build a minimal /App.js that imports and renders all generated components.
+ *
+ * Fixes vs the old version:
+ * - Uses the full normalized Sandpack path (e.g. /components/Button.jsx) not
+ *   just the basename, so imports resolve correctly.
+ * - Falls back to default import for every file to avoid named-export mismatches
+ *   (the most common cause of blank renders).
+ * - Skips db/schema.json and db/seed.json — not React components.
+ * - If a generated file IS already /App.js or /App.jsx, use it directly instead
+ *   of wrapping it.
+ */
 function buildAppJs(generatedFiles) {
+  // If agent produced a file literally named App.js / App.jsx, use it as-is
+  const appEntry =
+    generatedFiles["/App.jsx"] ??
+    generatedFiles["/App.js"] ??
+    generatedFiles["/app.jsx"] ??
+    generatedFiles["/app.js"];
+  if (appEntry) return appEntry;
+
+  // Filter to only React-renderable files
   const entries = Object.entries(generatedFiles).filter(([p]) => {
-    const name = p.split("/").pop().replace(/\.[^.]+$/, "");
-    return (
-      /^[A-Z]/.test(name) &&
-      name.toLowerCase() !== "app" &&        // never import App into App
-      !name.toLowerCase().includes("index")
-    );
+    const lower = p.toLowerCase();
+    if (!/\.(jsx?|tsx?)$/.test(lower)) return false;
+    const base = p.split("/").pop().replace(/\.[^.]+$/, "").toLowerCase();
+    return base !== "index" && base !== "db" && !base.startsWith("db.");
   });
+
   if (!entries.length) return null;
 
-  const imports = entries.map(([p, content]) => {
-    const name = p.split("/").pop().replace(/\.[^.]+$/, "");
-    return detectExportStyle(content, name) === "default"
-      ? `import ${name} from "${p}";`
-      : `import { ${name} } from "${p}";`;
+  const imports = entries.map(([p, content], i) => {
+    const id = `Comp${i}`;
+    // Always try default import first; fall back to namespace import
+    if (detectExportStyle(content) === "default") {
+      return `import ${id} from "${p}";`;
+    }
+    // For named exports, try to find the exported name and use it directly
+    const namedMatch = content.match(/export\s+(?:function|class|const)\s+([A-Z][a-zA-Z0-9]*)/);
+    if (namedMatch) {
+      return `import { ${namedMatch[1]} as ${id} } from "${p}";`;
+    }
+    return `import * as ${id}Mod from "${p}";\nconst ${id} = ${id}Mod.default ?? Object.values(${id}Mod)[0] ?? (() => null);`;
   }).join("\n");
 
-  const renders = entries
-    .map(([p]) => `  <${p.split("/").pop().replace(/\.[^.]+$/, "")} />`)
-    .join("\n");
+  const renders = entries.map((_, i) => `  <Comp${i} />`).join("\n");
 
-  return `${imports}\n\nexport default function App() {\n  return (\n    <div>\n${renders}\n    </div>\n  );\n}`;
+  return `import React from "react";\n${imports}\n\nexport default function App() {\n  return (\n    <div>\n${renders}\n    </div>\n  );\n}`;
 }
 
-// ─── Normalise agent file path → Sandpack path (/ComponentName.jsx) ──────────
-
+// ─── Normalise agent file path → absolute Sandpack path ──────────────────────
+// Preserves directory structure (e.g. src/components/Foo.jsx → /src/components/Foo.jsx)
+// so relative imports between files can resolve.
 function normalizePath(path) {
-  const parts = (path.startsWith("/") ? path : `/${path}`).split("/");
-  return `/${parts[parts.length - 1]}`;
+  return path.startsWith("/") ? path : `/${path}`;
 }
 
 // ─── Pipeline step pill ───────────────────────────────────────────────────────
@@ -153,6 +177,7 @@ function FileTabs({ files, activeFile, onSelect }) {
  */
 export function LivePreviewPanel({
   repoMap,
+  repoMeta,
   isDark,
   orchFiles        = null,
   orchStatus       = "idle",
@@ -161,6 +186,9 @@ export function LivePreviewPanel({
   orchFinalAnswer  = null,
   orchError        = null,
   onOrchestratorRun,
+  onRepoLoad,
+  onLoadStart,
+  isLoadingRepo    = false,
 }) {
   // ── Orchestrator prompt bar state ─────────────────────────────────────────
   const [orchGoal, setOrchGoal] = useState("");
@@ -324,6 +352,36 @@ export function LivePreviewPanel({
   return (
     <div className="lp-panel">
 
+      {/* ══ REPO CONTEXT BAR ════════════════════════════════════════════════ */}
+      <div className="lp-repo-bar">
+        <div className="lp-repo-bar__label">
+          <GitBranch size={13} aria-hidden="true" />
+          <span>REPO CONTEXT</span>
+        </div>
+        {repoMeta ? (
+          <div className="lp-repo-bar__loaded">
+            <span className="lp-repo-bar__name">
+              {repoMeta.fullName ?? `${repoMeta.owner}/${repoMeta.repo}`}
+            </span>
+            <span className="lp-repo-bar__branch">@ {repoMeta.branch}</span>
+            <span className="lp-repo-bar__hint">
+              — repo map loaded, orchestrator has full context
+            </span>
+          </div>
+        ) : (
+          <div className="lp-repo-bar__input">
+            <RepoInput
+              onLoad={onRepoLoad}
+              onLoadStart={onLoadStart}
+              isLoading={isLoadingRepo}
+            />
+            <p className="lp-repo-bar__skip">
+              Or skip this — the orchestrator will create a new repo automatically.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* ══ ORCHESTRATOR COMMAND BAR ════════════════════════════════════════ */}
       <div className="orch-command-bar">
         <div className="orch-command-bar__inner">
@@ -486,6 +544,10 @@ export function LivePreviewPanel({
             onClick={() => setPanelMode("code")} title="View code">
             <Code2 size={13} />
           </button>
+          <button type="button" className={`lp-mode-btn ${panelMode === "console" ? "is-active" : ""}`}
+            onClick={() => setPanelMode("console")} title="Console (debug errors)">
+            <Terminal size={13} />
+          </button>
           {hasFiles && (
             <button type="button" className="lp-mode-btn" onClick={handleClear} title="Clear">
               <Trash2 size={13} />
@@ -520,6 +582,8 @@ export function LivePreviewPanel({
           <SandpackLayout>
             {panelMode === "code" ? (
               <SandpackCodeEditor showTabs={false} showLineNumbers showInlineErrors wrapContent style={{ height: 520, fontSize: 12 }} />
+            ) : panelMode === "console" ? (
+              <SandpackConsole style={{ height: 520, fontSize: 12 }} />
             ) : (
               <SandpackPreview showNavigator={false} showRefreshButton showOpenInCodeSandbox={false} style={{ height: 520 }} />
             )}
