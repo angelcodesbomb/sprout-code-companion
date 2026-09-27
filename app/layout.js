@@ -48,7 +48,8 @@ export default function RootLayout({ children }) {
       className={`${dmSans.variable} ${dmMono.variable} ${fraunces.variable}`}
     >
       <head>
-        <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="alternate icon" href="/favicon.ico" type="image/x-icon" />
       </head>
       <body>
         <Providers>{children}</Providers>
