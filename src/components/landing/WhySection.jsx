@@ -46,11 +46,20 @@ export function WhySection() {
             has risen for those who know how to wield it.
           </p>
           <p>
-            Token cost is now a real budget line. Coding agents that drag an
-            entire codebase through the context window on every turn aren't
-            just slow — they're expensive. Studies show agents burning 10–13×
-            more tokens than needed because they re-read code they've already
-            seen. Sprout was built to fix that from the ground up.
+            Token cost is now a real budget line — not a theoretical one. Uber
+            burned through its entire 2026 AI coding budget in four months.
+            Microsoft cancelled Claude Code licenses for thousands of engineers
+            after costs hit $2,000 per person per month. These aren't startups
+            miscalculating. These are companies with the biggest AI budgets in
+            the world, hitting the same wall: agents that re-read code they've
+            already seen, on every single turn.
+          </p>
+          <p>
+            Studies show coding agents burning 10–13× more tokens than
+            necessary because they have no persistent context. They start
+            from scratch every time. Sprout was built to fix that — map the
+            codebase once, reference the compact snapshot on every run, and
+            never re-read what you already know.
           </p>
 
           {/* Pull quote */}

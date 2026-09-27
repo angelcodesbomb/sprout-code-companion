@@ -6054,3 +6054,115 @@ button {
 @media (max-width: 600px) {
   .tcc-section { padding: 60px 20px 72px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LANDING — Case Study Strip (Uber + Microsoft)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.case-strip {
+  background: var(--muted);
+  padding: 72px 32px 80px;
+}
+
+.case-strip__inner {
+  max-width: 1220px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.case-strip__label {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.case-strip__sublabel {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  margin: 0;
+  line-height: 1.55;
+  max-width: 520px;
+}
+
+.case-strip__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.case-card {
+  padding: 30px 32px 26px;
+  border: 2px solid var(--foreground);
+  border-radius: 16px 10px 18px 8px;
+  background: var(--card);
+  box-shadow: 4px 4px 0 color-mix(in oklab, var(--foreground) 10%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+}
+
+.case-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 6px;
+  border-radius: 2px 2px 0 0;
+}
+.case-card--coral::before { background: var(--coral); }
+.case-card--pink::before  { background: var(--pink);  }
+
+.case-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.case-card__company {
+  font: 700 22px/1 var(--font-serif);
+  color: var(--foreground);
+}
+
+.case-card__tag {
+  font: 500 9px var(--font-mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  padding: 3px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+}
+
+.case-card__headline {
+  font: 600 clamp(17px, 2vw, 22px)/1.2 var(--font-serif);
+  margin: 0;
+  color: var(--foreground);
+}
+.case-card--coral .case-card__headline { color: var(--coral); }
+.case-card--pink  .case-card__headline { color: color-mix(in oklab, var(--pink) 80%, var(--foreground)); }
+
+.case-card__body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+  margin: 0;
+  flex: 1;
+}
+
+.case-card__sources {
+  font: 500 9px var(--font-mono);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  opacity: 0.55;
+}
+
+@media (max-width: 760px) {
+  .case-strip__grid { grid-template-columns: 1fr; }
+  .case-strip { padding: 56px 20px 64px; }
+}

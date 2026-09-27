@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { NavBar } from "@/components/landing/NavBar";
 import { HeroSection } from "@/components/landing/HeroSection";
 import { TokenCostCallout } from "@/components/landing/TokenCostCallout";
+import { CaseStudyStrip } from "@/components/landing/CaseStudyStrip";
 import { StatsStrip } from "@/components/landing/StatsStrip";
 import { WhySection } from "@/components/landing/WhySection";
 import { HowItWorks } from "@/components/landing/HowItWorks";
@@ -55,6 +56,9 @@ export default function LandingPage() {
 
       {/* ── Token cost callout (replaces FeatureGrid) ───────────────── */}
       <TokenCostCallout />
+
+      {/* ── Real-world case studies — Uber + Microsoft ──────────────── */}
+      <CaseStudyStrip />
 
       {/* ── Stats strip ─────────────────────────────────────────────── */}
       <StatsStrip />
