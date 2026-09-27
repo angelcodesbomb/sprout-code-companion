@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { AGENT_DOMAINS, guessDomain } from "@/lib/repoMap";
 import { buildFallbackPointers, buildFallbackWorkflow } from "@/lib/repoMapExport";
+import { isWatsonConfigured, callWatsonChat } from "@/lib/watsonx";
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = process.env.GROQ_MODEL_FILEMAP || "openai/gpt-oss-20b";
+const GROQ_URL  = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_MODEL = process.env.GROQ_MODEL_FILEMAP || "openai/gpt-oss-20b";
 
 function parseModelJson(text) {
   const trimmed = text.trim();
@@ -44,15 +45,11 @@ export async function POST(request) {
     summary,
   };
 
-  if (!process.env.GROQ_API_KEY) {
+  // No AI configured at all — return static fallback immediately
+  if (!isWatsonConfigured() && !process.env.GROQ_API_KEY) {
     const workflow = buildFallbackWorkflow(entry);
     return NextResponse.json(
-      {
-        useFallback: true,
-        workflow,
-        pointers: buildFallbackPointers(entry),
-        role: workflow.function,
-      },
+      { useFallback: true, workflow, pointers: buildFallbackPointers(entry), role: workflow.function },
       { status: 503 }
     );
   }
@@ -62,7 +59,7 @@ export async function POST(request) {
       ? `Sibling entries: ${context.siblingNames.join(", ")}.`
       : "";
 
-  const system = `You are a friendly, patient "topper friend" explaining ONE path (a file or a folder) from a software repo to a complete beginner. The reader might be a new developer or a student who doesn't know jargon, frameworks, or programming concepts. After reading your answer, they should clearly understand what this path does and why it exists, without feeling confused or overwhelmed.
+  const systemPrompt = `You are a friendly, patient "topper friend" explaining ONE path (a file or a folder) from a software repo to a complete beginner. The reader might be a new developer or a student who doesn't know jargon, frameworks, or programming concepts. After reading your answer, they should clearly understand what this path does and why it exists, without feeling confused or overwhelmed.
 
 Reply with ONLY valid JSON with exactly these keys, in this order. No markdown, no code fences, no extra keys, and no text before or after the JSON:
 {"function":"...","inputs":"...","outputs":"...","process":"..."}
@@ -84,7 +81,7 @@ Style rules:
 
 Domain context (one of ${AGENT_DOMAINS.join(", ")}): ${guessDomain(node)}.`;
 
-  const user = [
+  const userPrompt = [
     context?.repoDescription ? `Repo: ${context.repoDescription}` : null,
     `Path: ${node.path || "(repository root)"}`,
     `Name: ${node.name}`,
@@ -97,74 +94,92 @@ Domain context (one of ${AGENT_DOMAINS.join(", ")}): ${guessDomain(node)}.`;
     .filter(Boolean)
     .join("\n");
 
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user",   content: userPrompt },
+  ];
+
+  /**
+   * Merge a raw LLM text response with the static fallback, returning a
+   * complete workflow object with no empty fields.
+   */
+  function buildWorkflow(content) {
+    const parsed      = parseModelJson(content);
+    const fallbackWf  = buildFallbackWorkflow(entry);
+    return {
+      function: typeof parsed?.function === "string" && parsed.function.trim() ? parsed.function.trim() : fallbackWf.function,
+      inputs:   typeof parsed?.inputs   === "string" && parsed.inputs.trim()   ? parsed.inputs.trim()   : fallbackWf.inputs,
+      outputs:  typeof parsed?.outputs  === "string" && parsed.outputs.trim()  ? parsed.outputs.trim()  : fallbackWf.outputs,
+      process:  typeof parsed?.process  === "string" && parsed.process.trim()  ? parsed.process.trim()  : fallbackWf.process,
+    };
+  }
+
+  // ── 1. Try Watson.ai (primary) ───────────────────────────────────────────
+  if (isWatsonConfigured()) {
+    try {
+      const content  = await callWatsonChat(messages, { maxTokens: 400, temperature: 0.35 });
+      const workflow = buildWorkflow(content);
+      console.log(`[explain] ✔ provider=watson  node=${node.path}`);
+      return NextResponse.json({
+        workflow,
+        role: workflow.function,
+        pointers: buildFallbackPointers(entry),
+        provider: "watson",
+      });
+    } catch (err) {
+      console.warn(`[explain] ✘ Watson failed (${err.message}) — trying Groq`);
+    }
+  }
+
+  // ── 2. Try Groq (fallback) ───────────────────────────────────────────────
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) {
+    const workflow = buildFallbackWorkflow(entry);
+    return NextResponse.json(
+      { useFallback: true, workflow, pointers: buildFallbackPointers(entry), role: workflow.function },
+      { status: 503 }
+    );
+  }
+
   try {
     const res = await fetch(GROQ_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        Authorization: `Bearer ${groqKey}`,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: GROQ_MODEL,
         temperature: 0.35,
         max_tokens: 400,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
+        messages,
       }),
     });
 
     if (!res.ok) {
       const workflow = buildFallbackWorkflow(entry);
       return NextResponse.json(
-        {
-          useFallback: true,
-          workflow,
-          pointers: buildFallbackPointers(entry),
-          role: workflow.function,
-        },
+        { useFallback: true, workflow, pointers: buildFallbackPointers(entry), role: workflow.function },
         { status: 503 }
       );
     }
 
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content ?? "";
-    const parsed = parseModelJson(content);
+    const data     = await res.json();
+    const content  = data.choices?.[0]?.message?.content ?? "";
+    const workflow = buildWorkflow(content);
 
-    const fallbackWf = buildFallbackWorkflow(entry);
-    const workflow = {
-      function:
-        typeof parsed?.function === "string" && parsed.function.trim()
-          ? parsed.function.trim()
-          : fallbackWf.function,
-      inputs:
-        typeof parsed?.inputs === "string" && parsed.inputs.trim()
-          ? parsed.inputs.trim()
-          : fallbackWf.inputs,
-      outputs:
-        typeof parsed?.outputs === "string" && parsed.outputs.trim()
-          ? parsed.outputs.trim()
-          : fallbackWf.outputs,
-      process:
-        typeof parsed?.process === "string" && parsed.process.trim()
-          ? parsed.process.trim()
-          : fallbackWf.process,
-    };
-
-    const role = workflow.function;
-
-    return NextResponse.json({ workflow, role, pointers: buildFallbackPointers(entry) });
+    console.log(`[explain] ✔ provider=groq   node=${node.path}`);
+    return NextResponse.json({
+      workflow,
+      role: workflow.function,
+      pointers: buildFallbackPointers(entry),
+      provider: "groq",
+    });
   } catch (err) {
-    console.error("explain route failed", err);
+    console.error("[explain] Groq request failed:", err);
     const workflow = buildFallbackWorkflow(entry);
     return NextResponse.json(
-      {
-        useFallback: true,
-        workflow,
-        pointers: buildFallbackPointers(entry),
-        role: workflow.function,
-      },
+      { useFallback: true, workflow, pointers: buildFallbackPointers(entry), role: workflow.function },
       { status: 503 }
     );
   }

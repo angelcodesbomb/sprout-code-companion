@@ -483,6 +483,61 @@ button {
   font: 600 italic 18px var(--font-serif);
 }
 
+/* ── Hero — Powered by IBM BoB 2.0 + Watson badge ─────────────────────── */
+.hero-powered-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+  padding: 9px 16px;
+  border: 1.5px solid color-mix(in oklab, var(--foreground) 25%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--background) 85%, transparent);
+  backdrop-filter: blur(8px);
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent),
+              0 2px 12px color-mix(in oklab, oklch(0.55 0.18 260) 15%, transparent);
+}
+
+.hero-powered-by__label {
+  color: color-mix(in oklab, var(--foreground) 50%, transparent);
+  font-size: 10px;
+}
+
+.hero-powered-by__sep {
+  color: color-mix(in oklab, var(--foreground) 30%, transparent);
+  font-size: 8px;
+}
+
+.hero-powered-by__badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font: 800 10px var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  position: relative;
+}
+
+.hero-powered-by__badge--ibm {
+  background: oklch(0.22 0.04 255);
+  color: oklch(0.97 0.01 255);
+  border: 1px solid oklch(0.38 0.08 255);
+  box-shadow: 0 0 10px oklch(0.45 0.15 255 / 0.4),
+              inset 0 1px 0 oklch(0.55 0.1 255 / 0.3);
+  text-shadow: 0 0 8px oklch(0.75 0.15 255 / 0.6);
+}
+
+.hero-powered-by__badge--watson {
+  background: oklch(0.20 0.14 285);
+  color: oklch(0.97 0.04 285);
+  border: 1px solid oklch(0.42 0.18 285);
+  box-shadow: 0 0 10px oklch(0.50 0.22 285 / 0.45),
+              inset 0 1px 0 oklch(0.60 0.15 285 / 0.3);
+  text-shadow: 0 0 8px oklch(0.80 0.18 285 / 0.6);
+}
+
 .hero-branch {
   position: absolute;
   right: 8%;
@@ -5426,6 +5481,10 @@ button {
 }
 
 .footer-bar__center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   text-align: center;
 }
 
@@ -5434,6 +5493,17 @@ button {
   letter-spacing: 0.08em;
   color: color-mix(in oklab, var(--background) 45%, transparent);
   text-transform: uppercase;
+}
+
+.footer-bar__watson {
+  font: 700 10px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, oklch(0.75 0.15 255), oklch(0.80 0.18 285));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: brightness(0.75);
 }
 
 .footer-bar__github {
@@ -5577,6 +5647,10 @@ button {
 
 .footer-bar__hackathon {
   color: oklch(0.42 0.01 75) !important;
+}
+
+.footer-bar__watson {
+  filter: brightness(1.15) !important;
 }
 
 .footer-bar__github {

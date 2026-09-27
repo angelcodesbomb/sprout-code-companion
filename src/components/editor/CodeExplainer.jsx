@@ -136,7 +136,7 @@ export function CodeExplainer({
       {autoLoadError && !isFetchingFile && (
         <div className="ce-load-error" role="alert">
           <AlertTriangle size={15} />
-          <span>{autoLoadError}</span>
+          <span>{autoLoadError} You can still paste code manually below.</span>
         </div>
       )}
 

@@ -11,7 +11,7 @@ const items = [
   },
   {
     q: "What AI models does it use, and can I change them?",
-    a: "Sprout uses Groq-hosted models and routes by role: the orchestrator and UI agent default to gpt-oss-120b for its tool-calling capability, while file map summaries and review gates use the faster gpt-oss-20b. Every model is an environment variable (GROQ_MODEL_ORCHESTRATOR, GROQ_MODEL_UI, GROQ_MODEL_FILEMAP, GROQ_MODEL_REVIEW) — swap any of them in .env.local without touching code.",
+    a: "Sprout's primary LLM is IBM Watson (watsonx.ai) — every file explanation, node summary, and Q&A call goes through meta-llama/llama-3-3-70b-instruct served from IBM's us-south endpoint. Groq is the fallback and handles orchestrator agents: the orchestrator and UI agent default to gpt-oss-120b for tool-calling, while file map summaries and review gates use the faster gpt-oss-20b. Every model is an environment variable (WATSONX_MODEL_ID, GROQ_MODEL_ORCHESTRATOR, GROQ_MODEL_UI, GROQ_MODEL_FILEMAP, GROQ_MODEL_REVIEW) — swap any of them in .env.local without touching code.",
   },
   {
     q: "Is my code sent to a third party?",

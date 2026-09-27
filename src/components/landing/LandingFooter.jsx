@@ -41,7 +41,10 @@ export function LandingFooter() {
         <SproutMark />
         <div className="footer-bar__center">
           <span className="footer-bar__hackathon">
-            Built for a hackathon ✦ 2026
+            Built for IBM BoB 2.0 Hackathon ✦ 2026
+          </span>
+          <span className="footer-bar__watson">
+            LLM inference powered by IBM Watson · meta-llama/llama-3-3-70b-instruct
           </span>
         </div>
         <a

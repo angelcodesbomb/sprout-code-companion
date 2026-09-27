@@ -689,11 +689,26 @@ export function FileMapGraph({ nodes, repoMeta, isLoading, isDark, edges = [], e
             .then((data) => {
               const raw = data.contents?.[filePath];
               if (raw === undefined || raw === null) {
-                throw new Error("File not found or is binary — cannot display.");
+                // File is binary, too large, or GitHub couldn't serve it — soft message
+                setLoadingNodePath(null);
+                onExplainFileRef.current?.({
+                  code: "",
+                  fileName: filePath,
+                  error: "This file couldn't be loaded — it may be binary, empty, or too large to display.",
+                  truncated: false,
+                });
+                return;
               }
               // Guard against suspiciously binary-looking content
               if (raw.length > 0 && raw.slice(0, 512).includes("\0")) {
-                throw new Error("This looks like a binary file and cannot be displayed.");
+                setLoadingNodePath(null);
+                onExplainFileRef.current?.({
+                  code: "",
+                  fileName: filePath,
+                  error: "This looks like a binary file and cannot be displayed.",
+                  truncated: false,
+                });
+                return;
               }
               const lines = raw.split("\n");
               const truncated = lines.length > MAX_LINES;

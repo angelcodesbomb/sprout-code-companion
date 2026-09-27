@@ -121,8 +121,15 @@ That is roughly **97% fewer tokens per full pipeline run** — the difference be
    └───────────────────┘  └────────────────────────┘
                                        │
                     ┌──────────────────▼────────────────────────────┐
-                    │              Groq API                          │
-                    │  (LLM inference — openai/gpt-oss-120b,        │
+                    │           IBM Watson (watsonx.ai)              │
+                    │  PRIMARY — meta-llama/llama-3-3-70b-instruct  │
+                    │  Endpoint: us-south.ml.cloud.ibm.com          │
+                    │  Routes: filemap/*, explain-code, explain-block│
+                    └───────────────────────────────────────────────┘
+                                       │
+                    ┌──────────────────▼────────────────────────────┐
+                    │              Groq API (fallback)               │
+                    │  (openai/gpt-oss-120b for agents,             │
                     │   openai/gpt-oss-20b for lighter tasks)       │
                     └───────────────────────────────────────────────┘
 ```
@@ -263,7 +270,8 @@ Orchestrator reads session.accessToken
 | Animations | Motion (Framer Motion v13) |
 | Graph rendering | D3 v7 |
 | Code preview | Sandpack (CodeSandbox) |
-| LLM inference | Groq API (`openai/gpt-oss-120b` for agents, `openai/gpt-oss-20b` for FileMap) |
+| Primary LLM | **IBM Watson** (`meta-llama/llama-3-3-70b-instruct` via watsonx.ai) |
+| Fallback LLM | Groq API (`openai/gpt-oss-120b` for agents, `openai/gpt-oss-20b` for FileMap) |
 | Auth | GitHub OAuth + iron-session (encrypted cookies) |
 | State management | React Context + TanStack Query |
 | Build tooling | PostCSS, ESLint, Prettier |
@@ -276,7 +284,8 @@ Orchestrator reads session.accessToken
 ### Prerequisites
 
 - Node.js 20+
-- A Groq API key ([console.groq.com](https://console.groq.com))
+- An IBM Cloud account with a watsonx.ai project ([cloud.ibm.com](https://cloud.ibm.com)) — **required, primary LLM**
+- A Groq API key ([console.groq.com](https://console.groq.com)) — fallback LLM + orchestrator agents
 - A GitHub OAuth App (for private repos and push)
 
 ### Installation
@@ -292,7 +301,12 @@ npm install
 Copy `.env.example` to `.env.local` and fill in:
 
 ```env
-# Required — LLM inference
+# Required — IBM Watson (primary LLM)
+WATSONX_API_KEY=your_ibm_cloud_iam_api_key
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_PROJECT_ID=your_watsonx_project_id
+
+# Required — Groq (fallback LLM + orchestrator agents)
 GROQ_API_KEY=your_groq_api_key
 
 # Optional — model overrides
@@ -332,6 +346,42 @@ IBM BoB IDE was used as the primary development environment for Sprout's most co
 - **Self-healing review pipeline** — the monitor and security gates with automatic retry logic were built with BoB's help, including diagnosing cases where self-heal retries would overwrite the wrong artifact in `ctx.artifacts`.
 - **Debugging agent communication** — BoB was used to trace SSE event flows from the orchestrator route through to the browser, catching cases where `ui_files` events were emitted before the security gate had run.
 - **UI Agent prompt engineering** — the system prompt for the UI Agent (React code generation with Sandpack compatibility rules, accessibility requirements, and guardrails) was developed and tested inside BoB.
+
+---
+
+## IBM Watson — LLM Backbone
+
+Watson is not a fallback. Watson is the **primary LLM provider** for every AI-powered feature in Sprout.
+
+Every file explanation, every node summary, every Q&A answer, and every code analysis call is routed through **IBM watsonx.ai** using the `meta-llama/llama-3-3-70b-instruct` model served from `https://us-south.ml.cloud.ibm.com`.
+
+### What Watson powers
+
+| Feature | Route | Watson call |
+|---|---|---|
+| File node deep-dive | `POST /api/filemap/explain` | Structured explanation: function, inputs, outputs, process |
+| File node hover summary | `POST /api/filemap/summarize` | 120-token focused summary |
+| Free-form Q&A on any file | `POST /api/filemap/ask` | Contextual answer from file content |
+| Full file plain-English walkthrough | `POST /api/explain-code` | Chunked block-by-block explanation |
+| Single block explainer | `POST /api/explain-block` | One-block focused explanation |
+
+### How Watson is called
+
+All Watson calls go through `src/lib/watsonx.js`:
+
+1. **IAM token exchange** — API key is exchanged for a Bearer token via `https://iam.cloud.ibm.com/identity/token`. Tokens are cached in-process for 55 minutes to avoid round-tripping on every request.
+2. **Chat inference** — Messages are sent to `POST {WATSONX_URL}/ml/v1/text/chat?version=2023-05-29` as an OpenAI-compatible messages array. Response shape: `{ choices: [{ message: { content: "..." } }] }`.
+3. **Groq fallback** — If `WATSONX_API_KEY`, `WATSONX_URL`, or `WATSONX_PROJECT_ID` are missing, routes fall back to Groq automatically. In production, Watson is always present.
+
+### Environment variables
+
+```env
+WATSONX_API_KEY=your_ibm_cloud_iam_api_key
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_PROJECT_ID=your_watsonx_project_id
+# Optional — defaults to meta-llama/llama-3-3-70b-instruct
+# WATSONX_MODEL_ID=meta-llama/llama-3-3-70b-instruct
+```
 
 ---
 

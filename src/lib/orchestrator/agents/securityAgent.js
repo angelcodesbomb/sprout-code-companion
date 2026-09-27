@@ -352,9 +352,8 @@ function buildNote(flags, llmUnavailable) {
  * Run a two-layer security review across one or more generated files.
  *
  * Layer 1 (static regex) always runs — free, synchronous, accurate.
- * Layer 2 (LLM, ~350 tokens) is opt-in via enableLayer2 to avoid hitting
- * rate limits during the main pipeline. Enable it for deep-scan mode or
- * when you have headroom in the Qwen bucket.
+ * Layer 2 (LLM, ~350 tokens) runs automatically when Layer 1 finds no
+ * critical/high flags for a file. Pass enableLayer2: false to skip it.
  *
  * @param {Array<{ path: string, content: string }> | { path: string, content: string }} files
  * @param {{ enableLayer2?: boolean }} options
@@ -373,12 +372,12 @@ function buildNote(flags, llmUnavailable) {
  *   note: string
  * }>}
  */
-export async function runSecurityAgent(files, { enableLayer2 = false } = {}) {
+export async function runSecurityAgent(files, { enableLayer2 = true } = {}) {
   // Normalize single object → array
   const fileList = Array.isArray(files) ? files : [files];
 
   const allFlags = [];
-  let llmUnavailable = !enableLayer2; // treat as unavailable if disabled
+  let llmUnavailable = false;
 
   for (const file of fileList) {
     // ── Layer 1 ──────────────────────────────────────────────────────────────

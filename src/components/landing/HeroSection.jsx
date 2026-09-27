@@ -75,6 +75,12 @@ export function HeroSection({ title, italicText, description, ctaLabel }) {
         <TypewriterEyebrow />
         <h1>{title} <em>{italicText}</em></h1>
         <p>{description}</p>
+        <div className="hero-powered-by" aria-label="Powered by IBM BoB 2.0 and Watson">
+          <span className="hero-powered-by__label">Powered by</span>
+          <span className="hero-powered-by__badge hero-powered-by__badge--ibm">IBM BoB 2.0</span>
+          <span className="hero-powered-by__sep">✦</span>
+          <span className="hero-powered-by__badge hero-powered-by__badge--watson">Watson</span>
+        </div>
         <ActionButton href="/workspace">{ctaLabel}</ActionButton>
       </motion.div>
       <div className="hero-stamp" aria-hidden="true">
