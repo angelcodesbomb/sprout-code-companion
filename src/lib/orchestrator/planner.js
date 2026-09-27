@@ -59,24 +59,39 @@ export function buildPlan(goal, ctx) {
   const plan = [];
 
   // ── Repo phase ──────────────────────────────────────────────────────────────
-  // Skip if ctx already has a fully initialized repo for this run
-  // (ctx.repo is populated by github_read_repo or github_propose_init_repo).
+  // If the client sent a mapSnapshot with valid repoMeta, we already know which
+  // repo to target — populate ctx.repo directly and skip the GitHub API re-read.
+  // This is the normal case: user loaded a repo in the workspace, then ran the
+  // orchestrator. No reason to re-fetch what we already have.
+  if (!ctx.repo && ctx.mapSnapshot?.repoMeta?.owner && ctx.mapSnapshot?.repoMeta?.repo) {
+    const rm = ctx.mapSnapshot.repoMeta;
+    ctx.repo = {
+      name:        rm.repo,
+      fullName:    rm.fullName ?? `${rm.owner}/${rm.repo}`,
+      description: rm.description ?? "",
+      owner:       rm.owner,
+      branch:      rm.branch ?? "main",
+      private:     rm.private ?? false,
+    };
+    // Map is also already loaded — skip the map phase
+    ctx.phase = "map_loaded";
+  }
+
   const repoAlreadyReady = Boolean(ctx.repo);
 
   if (!repoAlreadyReady) {
-    // Use github_read_repo when the goal names an existing repo (owner/repo pattern),
-    // or when ctx carries a pre-loaded map snapshot that implies a known repo.
-    const existingRepoHint =
-      /[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+/.test(goal) && ctx.mapSnapshot !== null;
+    // No loaded repo in context. Decide: read an existing one or create a new one.
+    // Use repo_read when the goal explicitly names "owner/repo" — user wants to
+    // target a specific existing repo they haven't loaded in the workspace.
+    // Otherwise create a brand new repo.
+    const goalNamesRepo = /[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+/.test(goal);
 
-    if (existingRepoHint) {
-      // Read an existing repo — no confirm step needed.
+    if (goalNamesRepo) {
       plan.push("repo_read");
     } else {
       // Create a new repo.
       plan.push("repo_init");
-      // Confirm is only needed when auto-approve is off; with auto-approve on the
-      // propose_* tool executes immediately and returns without a pending action.
+      // Confirm is only needed when auto-approve is off.
       if (!ctx.autoApproveHuman) {
         plan.push("repo_confirm");
       }
@@ -84,8 +99,8 @@ export function buildPlan(goal, ctx) {
   }
 
   // ── Map phase ────────────────────────────────────────────────────────────────
-  // Skip only if ctx already carries a fresh compact map from this run
-  // (set by github_read_repo or a prior map_parser_load_cache call).
+  // Skip if ctx already has a fresh compact map (set above from mapSnapshot,
+  // or by github_read_repo / a prior map_parser_load_cache call).
   const mapAlreadyLoaded = ctx.phase === "map_loaded" || ctx.phase === "map_refreshed";
 
   if (!mapAlreadyLoaded) {
@@ -133,17 +148,22 @@ export function buildToolInput(phase, ctx) {
   switch (phase) {
     case "repo_read": {
       // github_read_repo requires: owner, repo (strings).
-      // Extract from ctx.mapSnapshot.repoMeta if available, else
-      // parse "owner/repo" from the goal string as a fallback.
-      const meta = ctx.mapSnapshot?.repoMeta ?? ctx.mapCompact;
+      // Primary: extract from ctx.mapSnapshot.repoMeta (populated by the workspace).
+      // Fallback: parse "owner/repo" from the goal string.
+      const meta = ctx.mapSnapshot?.repoMeta;
       if (meta?.owner && meta?.repo) {
         return { owner: meta.owner, repo: meta.repo };
       }
-      // Fallback: parse first "owner/repo" token from goal
-      const match = ctx.goal.match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
+      // Try to parse from repoKey ("owner/repo@branch")
+      const keyMatch = (ctx.mapSnapshot?.repoKey ?? "").match(/^([^/]+)\/([^@]+)/);
+      if (keyMatch) {
+        return { owner: keyMatch[1], repo: keyMatch[2] };
+      }
+      // Last resort: scan goal text for "owner/repo" token
+      const goalMatch = ctx.goal.match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
       return {
-        owner: match?.[1] ?? "unknown",
-        repo:  match?.[2] ?? "repo",
+        owner: goalMatch?.[1] ?? "unknown",
+        repo:  goalMatch?.[2] ?? "repo",
       };
     }
 
