@@ -1,222 +1,387 @@
-# Sprout
+# Sprout — Code Companion
 
-**AI-powered code companion that maps your codebase, explains every file, and runs a token-efficient multi-agent pipeline to generate and ship code — straight to GitHub.**
+> **Understand the code. Grow with confidence.**
 
-Built for a hackathon. Built to solve a real problem: most AI coding agents burn 10–13× more tokens than needed by re-reading code they've already seen. Sprout fixes that from the ground up.
+Sprout turns any GitHub repository into a visual, interactive map and explains every file in plain English — then lets you describe a goal and watches a multi-agent pipeline build, review, and push production-ready code for you.
 
----
-
-## What it does
-
-### 1. Visual File Map
-Load any public GitHub repo (or private with OAuth). Sprout fetches the full recursive file tree, classifies every file by domain (UI / API / Database / Security / Validation / Review) using fast rule-based heuristics, and renders an interactive D3 graph.
-
-- Hover any node → on-demand AI summary (~120 tokens, lazy — not upfront)
-- Click any node → deeper detail: role, pointers to related files, workflow breakdown
-- Ask the map a natural-language question ("where is authentication handled?") → instant answer with target file
-- Export the full map as Markdown or JSON to paste into any AI tool
-
-Summaries are cached in `sessionStorage` per repo so they survive page reloads and are never re-fetched.
-
-### 2. Code Explainer
-Paste or load any file. Sprout splits it into logical blocks, then explains any selected block in plain English — no full-file re-read on every question.
-
-### 3. Multi-Agent Orchestrator
-Describe what you want to build. A **deterministic planner** (no routing LLM) computes the exact pipeline and executes it:
-
-| Phase | What happens |
-|---|---|
-| `repo_read` | Reads the target GitHub repo tree + optional file samples |
-| `map` | Loads a compact repo map snapshot (~800 tokens, not the full tree) |
-| `db` *(if goal mentions database)* | DB agent designs schema + seed data + `db.js` data layer |
-| `ui` | UI agent generates React component files from the goal + map context |
-| Monitor gate | Auto-reviews every generated artifact — quality check, 64-token reply |
-| Security gate | Auto-reviews for secrets, eval(), server-only imports, XSS |
-| Self-heal | If monitor fails, retries the same agent with feedback injected — no human loop |
-| `push` | Creates blobs, builds a tree commit, pushes to GitHub via Trees API |
-
-Every step streams back to the browser over SSE. Generated files render live in a Sandpack in-browser sandbox before anything hits GitHub.
-
-### 4. Run History
-Every completed run is saved to `localStorage` per repo. The last 3 runs are injected as compact context on the next run so the agent knows what was already built.
+Built for the **IBM BoB 2.0 Hackathon**. IBM BoB IDE was central to the project: the orchestrator architecture was designed and debugged inside BoB, the FileMap component was created and refined with BoB's assistance, and BoB was used throughout to trace agent communication flows, catch edge cases, and finalize the self-healing review pipeline.
 
 ---
 
-## Why the token efficiency matters
+## The Problem
+
+Token cost is now a real budget line. Uber burned its entire 2026 AI coding budget in four months. Microsoft cancelled Claude Code licenses for thousands of engineers after costs hit $2,000 per person per month. Studies show coding agents burning 10–13× more tokens than necessary because they have no persistent context — they re-read the whole codebase from scratch on every single turn.
+
+Meanwhile, general software engineering postings are down 49% while ML and AI engineer roles are up 59%. The engineers who survive are the ones who know how to make AI work efficiently for them — not around them.
+
+Sprout was built to fix the token problem: map the codebase once, reference a compact snapshot on every agent run, and never re-read what you already know.
+
+---
+
+## Value Proposition
 
 | Operation | Typical agent | Sprout |
 |---|---|---|
 | Routing decision per turn | ~3,500 tokens | **0** — deterministic planner |
-| Repo context per run | ~40,000 tokens | **~800** — compact snapshot |
+| Repo context per run | ~40,000 tokens | **~800** — compact 40-path snapshot |
 | Code review pass | ~3,500 tokens | **~300** — 2 files × 1.5k chars |
 | Node summary (hover) | ~2,000 tokens | **~120** — path + siblings only |
+| History context injected | ~8,000 tokens | **~400** — last 3 runs, truncated |
 | **Total per run** | **~57,000 tokens** | **~1,620 tokens** |
 
-At GPT-4-class pricing and 100 runs/day, that's roughly **$9,000/month saved** per team.
+That is roughly **97% fewer tokens per full pipeline run** — the difference between a $0.04 run and a $0.80 run, multiplied across hundreds of builds per day.
 
 ---
 
-## Tech stack
+## Features
 
-| Layer | Choice |
+**FileMap** — Visual codebase explorer
+- Paste any GitHub `owner/repo` (public or private). Sprout fetches the full recursive file tree via the GitHub API — no clone, no local setup.
+- Every file is domain-tagged instantly (UI / API / Database / Security / Validation / Review) using fast regex heuristics. Zero LLM calls for the initial map.
+- Hover any node to trigger an on-demand AI summary — one focused 120-token call rather than a bulk scan.
+- Interactive D3-powered graph with dependency edges computed from the file tree.
+- FileMap component was created and iteratively refined using IBM BoB IDE.
+
+**Code Explainer** — Plain-English code understanding
+- Paste or load any file and Sprout chunks it into logical blocks (Imports, State, Handlers, Render).
+- Every block gets a plain-English explanation written like a patient friend explaining over chai — no jargon, no assumptions about what you already know.
+- Fallback explanations work even without an AI key, so the tool is always useful.
+
+**Orchestrator** — Multi-agent build pipeline
+- Describe your goal in plain English. A deterministic planner computes the exact pipeline — no routing LLM, no wasted turns deciding what to do next.
+- The pipeline stages: repo load → map activation → database schema generation → UI code generation → automated review → GitHub push.
+- The orchestrator architecture was designed and debugged in IBM BoB IDE, including tracing agent communication flows and resolving context-passing edge cases between agents.
+
+**Self-Healing Review Pipeline** — Automated quality and security gates
+- After every code generation step, Monitor and Security gates fire automatically — each sending only 2 files × 1,500 chars to a fast model, capped at 64-token responses.
+- If the monitor fails, the agent retries with feedback injected. If the security gate flags issues (hardcoded secrets, `eval()`, `dangerouslySetInnerHTML`, server-only imports in client components), the agent self-heals before the step is marked complete.
+- No human loop required. ~300 tokens per review pass versus ~3,500 for a full orchestrator turn.
+
+**Live Preview** — Sandpack sandbox
+- Generated files render immediately in a CodeSandbox (Sandpack) sandbox in the browser. No deploy, no build step. File paths are flattened and imports rewritten automatically.
+
+**GitHub Push** — One-click deploy
+- When satisfied, one click creates blobs, builds a tree on top of the current HEAD, creates a commit, and updates the branch ref — all via the GitHub Trees API. No local git required.
+
+**Run History** — Persistent per-repo context
+- Every completed orchestrator run is saved to `localStorage` keyed by repo. Prior run summaries are injected as context on the next run so the agent knows what was already built.
+
+---
+
+## Architecture
+
+### High-Level System
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                          Browser Client                             │
+│                                                                     │
+│  ┌──────────────┐   ┌──────────────────┐   ┌────────────────────┐  │
+│  │  Landing Page│   │  FileMap / Graph  │   │  Orchestrator UI   │  │
+│  │  (Next.js)   │   │  (D3 + RepoMap)  │   │  (SSE stream)      │  │
+│  └──────────────┘   └────────┬─────────┘   └─────────┬──────────┘  │
+│                               │                       │             │
+└───────────────────────────────┼───────────────────────┼─────────────┘
+                                │                       │
+                    ┌───────────▼───────────────────────▼──────────┐
+                    │              Next.js API Routes               │
+                    │                                               │
+                    │  /api/filemap/summarize   (node hover)        │
+                    │  /api/filemap/explain     (node deep dive)    │
+                    │  /api/filemap/ask         (free-form Q&A)     │
+                    │  /api/explain-code        (file explainer)    │
+                    │  /api/chunk-code          (logical chunking)  │
+                    │  /api/explain-block       (block explainer)   │
+                    │  /api/orchestrator        (pipeline + SSE)    │
+                    │  /api/auth/*              (GitHub OAuth)      │
+                    └──────────────────┬────────────────────────────┘
+                                       │
+                    ┌──────────────────▼────────────────────────────┐
+                    │           Orchestrator Core                    │
+                    │        (src/lib/orchestrator/)                 │
+                    │                                               │
+                    │  planner.js  ─→  deterministic phase plan     │
+                    │  loop.js     ─→  executes plan, fires gates   │
+                    │  tools.js    ─→  tool registry                │
+                    │  context.js  ─→  shared run state             │
+                    └──────────────────┬────────────────────────────┘
+                                       │
+              ┌────────────────────────┼──────────────────────────┐
+              │                        │                          │
+   ┌──────────▼────────┐  ┌────────────▼──────────┐  ┌───────────▼────────┐
+   │   GitHub Agent    │  │     UI Agent           │  │   Database Agent   │
+   │  (read / push)    │  │  (React code gen)      │  │  (schema + db.js)  │
+   └───────────────────┘  └────────────────────────┘  └────────────────────┘
+                                       │
+              ┌────────────────────────┼──────────────────────────┐
+              │                        │                          │
+   ┌──────────▼────────┐  ┌────────────▼──────────┐
+   │   Monitor Gate    │  │   Security Gate        │
+   │  (quality review) │  │  (vuln + secret check) │
+   └───────────────────┘  └────────────────────────┘
+                                       │
+                    ┌──────────────────▼────────────────────────────┐
+                    │              Groq API                          │
+                    │  (LLM inference — openai/gpt-oss-120b,        │
+                    │   openai/gpt-oss-20b for lighter tasks)       │
+                    └───────────────────────────────────────────────┘
+```
+
+### Orchestrator Pipeline (Deterministic Planner)
+
+```
+User types goal
+       │
+       ▼
+ buildPlan(goal, ctx)   ← pure function, zero LLM calls
+       │
+       │   Computes phases based on:
+       │   • Is a repo already loaded?  (skip repo_read)
+       │   • Does goal mention "database"?  (include db phase)
+       │   • Does goal say "backend-only"?  (skip ui phase)
+       │   • Does goal say "dry-run"?  (skip push phase)
+       │
+       ▼
+ [ repo_read → map → db? → ui → push ]
+       │
+       │   For each phase:
+       │
+       ├──► phaseToToolName(phase)   ← maps phase to exact tool name
+       │
+       ├──► buildToolInput(phase, ctx)  ← constructs tool arguments
+       │
+       ├──► tool.run(input)   ← executes the agent
+       │
+       ├──► if CODEGEN tool:
+       │       ├── monitorGate(artifact)    → self-heal on fail
+       │       └── securityGate(artifact)  → self-heal on fail
+       │
+       └──► onStepComplete(step)  → SSE event to browser
+```
+
+### FileMap Data Flow
+
+```
+GitHub API
+    │
+    │  GET /repos/:owner/:repo/git/trees/:sha?recursive=1
+    ▼
+parseGithubTree()
+    │  Converts flat blob/tree list → nested tree structure
+    ▼
+buildRepoMap()
+    │  Tags every node with domain (UI/API/DB/Security/etc.)
+    │  using regex heuristics — zero LLM calls
+    ▼
+RepoMapContext (React context)
+    │  Shared state: nodesByPath, domainCounts, repoMeta
+    ▼
+D3 Force Graph
+    │  Renders nodes + edges in the browser
+    │
+    │  User hovers a node
+    ▼
+/api/filemap/summarize   ← 120-token focused call
+    │  Returns: { summary, domain }
+    ▼
+Node tooltip / detail panel
+    │
+    │  User clicks "Explain"
+    ▼
+/api/filemap/explain     ← 400-token structured call
+    │  Returns: { function, inputs, outputs, process }
+    ▼
+Workflow detail drawer
+```
+
+### Self-Healing Review Gates
+
+```
+UI Agent / DB Agent generates files
+              │
+              ▼
+     monitorGate(artifact)
+         sends: 2 files × 1,500 chars
+         receives: { pass, feedback }
+              │
+      ┌───────┴────────┐
+    pass              fail
+      │                │
+      │         inject feedback into spec
+      │         re-run same agent (1 retry)
+      │                │
+      └───────┬─────────┘
+              ▼
+     securityGate(artifact)
+         checks: hardcoded secrets, eval(),
+                 dangerouslySetInnerHTML,
+                 server-only imports in client files
+              │
+      ┌───────┴────────┐
+    pass              fail
+      │                │
+      │         inject security fix instructions
+      │         re-run same agent (1 retry)
+      │                │
+      └───────┬─────────┘
+              ▼
+         Next phase
+         (push to GitHub)
+```
+
+### Auth Flow
+
+```
+User clicks "Connect GitHub"
+         │
+         ▼
+GET /api/auth/login
+  → Redirects to GitHub OAuth
+         │
+         ▼ (GitHub callback)
+GET /api/auth/callback
+  → Exchanges code for access_token
+  → Stores token in iron-session (encrypted cookie)
+         │
+         ▼
+GET /api/auth/session
+  → Returns { user, isLoggedIn }
+         │
+         ▼
+Orchestrator reads session.accessToken
+  → Used for private repo access and GitHub push
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
 |---|---|
 | Framework | Next.js 16 (App Router) |
-| Language | JavaScript / JSX |
-| Styling | Tailwind CSS v4 + custom CSS design system |
-| Animation | Framer Motion (`motion/react`) |
-| Graph | D3 v7 |
-| Live preview | Sandpack (`@codesandbox/sandpack-react`) |
-| AI / LLM | [Groq](https://console.groq.com) — multi-model routing by role |
-| Auth | GitHub OAuth → iron-session (encrypted cookie) |
-
-### Model routing
-
-| Role | Env var | Default |
-|---|---|---|
-| Orchestrator + UI generation | `GROQ_MODEL_UI` | `openai/gpt-oss-120b` |
-| Review / security gates | `GROQ_MODEL_REVIEW` | `openai/gpt-oss-20b` |
-| File map summaries | `GROQ_MODEL_FILEMAP` | `openai/gpt-oss-20b` |
+| UI | React 19, Tailwind CSS v4, Radix UI primitives |
+| Animations | Motion (Framer Motion v13) |
+| Graph rendering | D3 v7 |
+| Code preview | Sandpack (CodeSandbox) |
+| LLM inference | Groq API (`openai/gpt-oss-120b` for agents, `openai/gpt-oss-20b` for FileMap) |
+| Auth | GitHub OAuth + iron-session (encrypted cookies) |
+| State management | React Context + TanStack Query |
+| Build tooling | PostCSS, ESLint, Prettier |
+| IDE (core features) | **IBM BoB 2.0** |
 
 ---
 
-## Project structure
+## Getting Started
 
-```
-app/
-  page.js                    # Landing page
-  workspace/
-    WorkspaceClient.js       # Client shell — repo loading, orchestrator SSE, history
-  api/
-    auth/                    # GitHub OAuth (login, callback, logout, session)
-    github/tree              # Server-side proxy for GitHub recursive tree API
-    github/content           # Proxies individual file content
-    filemap/summarize        # AI summary for a single file node (on hover)
-    filemap/explain          # Deeper node detail (role, pointers, workflow)
-    filemap/ask              # Natural-language Q&A over the repo map
-    explain-code             # Full-file structured code explanation
-    explain-block            # Selected-block plain-English explanation
-    chunk-code               # Splits a file into logical blocks
-    orchestrator             # SSE endpoint — streams the multi-agent pipeline
-    agents/ui                # Direct UI-agent endpoint (used by live preview standalone)
+### Prerequisites
 
-src/
-  components/
-    landing/                 # Hero, NavBar, stats strip, how-it-works, token math, FAQ, footer
-    dashboard/               # DashboardShell, tab routing
-    filemap/                 # FileSystemMap, FileMapGraph (D3), RepoInput, ask/copy bars
-    editor/                  # CodeExplainer panel
-    agents/                  # AgentSidebar, AgentCardRow, OrchestratorStatus, ReviewResultsPanel
-    history/                 # HistorySidebar (run history per repo)
-    preview/                 # LivePreviewPanel (Sandpack + orchestrator integration)
-    shared/                  # ActionButton, SproutMark logo, ThemeToggle
-  context/
-    RepoMapContext.jsx       # Shared repo-map state across workspace
-  hooks/
-    useRepoMapSummarize      # Lazy AI summarisation on node hover/click
-    useRepoDependencies      # Parses import graph from file content
-    useRunHistory            # localStorage run history per repo key
-    useSession               # GitHub auth session
-  lib/
-    repoMap.js               # Build, persist, merge AI results into the map
-    parseGithubTree.js       # Flatten GitHub tree API response
-    parseDependencies.js     # Static import/require graph parser
-    fileTypeGuess.js         # Rule-based fallback labels before AI runs
-    repoMapAsk.js            # Prompt builder for ask-about-repo flow
-    repoMapExport.js         # Copy-to-clipboard export (Markdown / JSON)
-    auth.js                  # iron-session helpers
-    orchestrator/
-      loop.js                # Main pipeline runner — iterates phases, fires gates
-      planner.js             # Deterministic plan builder (zero LLM calls)
-      tools.js               # Tool registry wired to agent implementations
-      context.js             # Mutable run context + compactMapSnapshot()
-      groq.js                # Groq client — multi-model routing, rate-limit retry
-      validate.js            # Tool result shape assertion
-      agents/
-        uiAgent.js           # Generates React files from goal + repo map context
-        dbAgent.js           # Designs database schemas + data layer
-        reviewAgent.js       # Monitor (quality) + Security review gates
-        githubAgent.js       # Reads/creates repos, pushes commits via Trees API
-        stubs.js             # No-op stubs for map-load phase
-```
+- Node.js 20+
+- A Groq API key ([console.groq.com](https://console.groq.com))
+- A GitHub OAuth App (for private repos and push)
 
----
+### Installation
 
-## Getting started
-
-Requires Node.js ≥ 18.
-
-```sh
-git clone https://github.com/angelcodesbomb/sprout-code-companion
+```bash
+git clone https://github.com/your-username/sprout-code-companion
 cd sprout-code-companion
 npm install
-cp .env.example .env.local   # fill in GROQ_API_KEY at minimum
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in:
+
+```env
+# Required — LLM inference
+GROQ_API_KEY=your_groq_api_key
+
+# Optional — model overrides
+GROQ_MODEL_FILEMAP=openai/gpt-oss-20b
+GROQ_MODEL_UI=openai/gpt-oss-120b
+GROQ_MODEL_ORCHESTRATOR=openai/gpt-oss-120b
+
+# Required for private repos and push
+GITHUB_TOKEN=your_github_pat
+
+# Required for OAuth login
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+NEXTAUTH_SECRET=your_random_secret
+NEXTAUTH_URL=http://localhost:3000
+
+# Required for encrypted session cookies
+SESSION_SECRET=your_32_char_minimum_secret
+```
+
+### Run
+
+```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-### Environment variables
+---
 
-| Variable | Required | Description |
-|---|---|---|
-| `GROQ_API_KEY` | ✅ | [Get a free key at console.groq.com](https://console.groq.com) |
-| `GROQ_MODEL_UI` | optional | Model for UI generation (default: `openai/gpt-oss-120b`) |
-| `GROQ_MODEL_REVIEW` | optional | Model for review gates (default: `openai/gpt-oss-20b`) |
-| `GROQ_MODEL_FILEMAP` | optional | Model for file map summaries (default: `openai/gpt-oss-20b`) |
-| `GITHUB_CLIENT_ID` | for auth | GitHub OAuth App client ID |
-| `GITHUB_CLIENT_SECRET` | for auth | GitHub OAuth App client secret |
-| `AUTH_SECRET` | for auth | 32-byte base64 secret for cookie encryption |
-| `GITHUB_TOKEN` | optional | Server-side PAT for higher GitHub API rate limits |
+## IBM BoB 2.0 — How It Was Used
 
-**GitHub OAuth App** (only needed for private repos / pushing):
-1. [Create an OAuth App](https://github.com/settings/developers)
-2. Homepage URL: `http://localhost:3000`
-3. Callback URL: `http://localhost:3000/api/auth/callback`
+IBM BoB IDE was used as the primary development environment for Sprout's most complex subsystems:
 
-### Other commands
+- **Orchestrator architecture** — the deterministic planner (`planner.js`) and execution loop (`loop.js`) were designed inside BoB, with BoB helping trace the context-passing chain between phases and surface edge cases where `ctx` state was stale or incomplete.
+- **FileMap component** — the RepoMap data model, domain-tagging heuristics, and the D3 graph rendering pipeline were created and refined iteratively inside BoB.
+- **Self-healing review pipeline** — the monitor and security gates with automatic retry logic were built with BoB's help, including diagnosing cases where self-heal retries would overwrite the wrong artifact in `ctx.artifacts`.
+- **Debugging agent communication** — BoB was used to trace SSE event flows from the orchestrator route through to the browser, catching cases where `ui_files` events were emitted before the security gate had run.
+- **UI Agent prompt engineering** — the system prompt for the UI Agent (React code generation with Sandpack compatibility rules, accessibility requirements, and guardrails) was developed and tested inside BoB.
 
-```sh
-npm run build                   # Production build
-npm run lint                    # ESLint
-npm run test:orchestrator       # Smoke-test the orchestrator pipeline
-npm run test:groq-tools         # Smoke-test Groq tool-calling
+---
+
+## Project Structure
+
+```
+sprout-code-companion/
+├── app/
+│   ├── page.js                    # Landing page
+│   ├── workspace/
+│   │   ├── page.js                # Workspace metadata
+│   │   └── WorkspaceClient.js     # Main workspace shell
+│   └── api/
+│       ├── orchestrator/route.js  # Pipeline endpoint (SSE)
+│       ├── filemap/
+│       │   ├── summarize/         # Node hover summaries
+│       │   ├── explain/           # Deep-dive explanations
+│       │   └── ask/               # Free-form Q&A
+│       ├── chunk-code/            # Logical block chunker
+│       ├── explain-code/          # Full file explainer
+│       ├── explain-block/         # Single block explainer
+│       ├── github/                # Repo tree + file content
+│       └── auth/                  # GitHub OAuth flow
+├── src/
+│   ├── lib/
+│   │   ├── orchestrator/
+│   │   │   ├── planner.js         # Deterministic pipeline planner
+│   │   │   ├── loop.js            # Execution loop + review gates
+│   │   │   ├── tools.js           # Tool registry
+│   │   │   ├── context.js         # Shared run state
+│   │   │   └── agents/
+│   │   │       ├── uiAgent.js     # React code generator
+│   │   │       ├── dbAgent.js     # Schema + data layer generator
+│   │   │       ├── githubAgent.js # Repo read / push
+│   │   │       └── reviewAgent.js # Monitor + security gates
+│   │   ├── repoMap.js             # Domain tagging heuristics
+│   │   ├── parseGithubTree.js     # Tree parser
+│   │   └── auth.js                # Session helpers
+│   ├── components/
+│   │   ├── landing/               # Marketing page sections
+│   │   ├── dashboard/             # Workspace shell
+│   │   ├── agents/                # Agent sidebar + results panels
+│   │   └── editor/                # Code explainer UI
+│   ├── context/                   # RepoMapContext
+│   └── hooks/                     # useRepoMapSummarize, useRepoDependencies, etc.
+└── scripts/                       # Pipeline test runners
 ```
 
 ---
 
-## How the orchestrator pipeline works
+## License
 
-```
-POST /api/orchestrator  { goal, mapSnapshot?, stream: true }
-        │
-        ▼
-  buildPlan(goal, ctx)          ← pure function, zero LLM calls
-        │
-  for each phase:
-  ┌─────────────────────────────────────────────────────┐
-  │  tool_start  ──SSE──►  browser                      │
-  │  tool.run(input)                                     │
-  │  step  ──SSE──►  browser                            │
-  │                                                      │
-  │  if codegen step succeeded:                          │
-  │    monitorGate  → self-heal if quality fails (1×)    │
-  │    securityGate → log flags, continue                │
-  │    ui_files  ──SSE──►  browser  → Sandpack preview  │
-  └─────────────────────────────────────────────────────┘
-        │
-  done  ──SSE──►  browser
-```
-
-The key design choice: routing is a **pure function** (`planner.js`), not an LLM call. The previous approach asked a model "what should I do next?" on every turn (~3,500 tokens each). The current planner uses regex + boolean checks and costs zero tokens.
-
----
-
-## Architecture decisions worth noting
-
-**File map first, content never** — agents receive a compact snapshot of the repo map (40 sample paths + domain counts), not file content. The UI agent never reads actual source files — it infers stack and structure from paths alone.
-
-**Review as middleware, not a pipeline step** — the Monitor and Security gates run as synchronous middleware after every codegen step, not as orchestrator turns. They don't consume a routing slot and can't be skipped by the planner.
-
-**Sandpack path flattening** — generated files are normalized to a flat root (`/Button.jsx`, `/db.js`) and imports are rewritten automatically so Sandpack resolves them without a bundler config.
-
-**Single CSS file** — the entire design system lives in `src/styles.css`. No Tailwind utility classes in component files for custom UI — only the design token layer (`bg-card`, `text-foreground` etc.) is used where Tailwind makes sense.
+MIT
