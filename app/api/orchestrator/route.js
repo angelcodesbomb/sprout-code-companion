@@ -25,11 +25,12 @@ export async function POST(request) {
     return NextResponse.json({ error: "GROQ_API_KEY is not configured." }, { status: 500 });
   }
 
-  // Resolve the GitHub token from the signed-in session (or fall back to env var).
-  // This is passed into the run context so the GitHub Agent can authenticate
-  // without calling getSession() itself (which requires next/headers).
+  // Resolve the GitHub token.
+  // Priority: env PAT (explicit, always valid) → session OAuth token → null.
+  // We prefer the env PAT because it's the configured server credential;
+  // the session OAuth token may be stale or from a different account.
   const session = await getSession();
-  const githubToken = session?.accessToken ?? process.env.GITHUB_TOKEN ?? null;
+  const githubToken = process.env.GITHUB_TOKEN ?? session?.accessToken ?? null;
 
   if (stream) {
     const encoder = new TextEncoder();
