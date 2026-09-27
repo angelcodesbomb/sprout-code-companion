@@ -481,7 +481,7 @@ export function LivePreviewPanel({
               <AnimatePresence initial={false}>
                 {orchSteps.map((s, i) => (
                   <StepPill
-                    key={s.step ?? i}
+                    key={`${s.step ?? i}-${s.toolName ?? i}`}
                     step={s}
                     isLive={false}
                   />

@@ -125,7 +125,17 @@ export default function WorkspaceClient() {
           if (event === "tool_start") {
             setOrchCurrentTool(data.toolName ?? null);
           } else if (event === "step") {
-            setOrchSteps((prev) => [...prev, data]);
+            // Replace existing step with same step number (review gates re-emit
+            // the same step with monitorResult/securityResult attached), or append.
+            setOrchSteps((prev) => {
+              const idx = prev.findIndex((s) => s.step === data.step);
+              if (idx !== -1) {
+                const next = [...prev];
+                next[idx] = data;
+                return next;
+              }
+              return [...prev, data];
+            });
             setOrchCurrentTool(null);
           } else if (event === "ui_files") {
             // UI agent just finished — push files into Sandpack immediately

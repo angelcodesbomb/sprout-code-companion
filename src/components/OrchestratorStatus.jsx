@@ -106,7 +106,7 @@ export function OrchestratorStatus({
 
               return (
                 <AgentCardRow
-                  key={s.step}
+                  key={`${s.step}-${s.toolName}`}
                   name={meta.name}
                   tone={meta.tone}
                   isLive={Boolean(isLive)}
