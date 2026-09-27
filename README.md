@@ -1,84 +1,222 @@
-# Sprout Code Companion
+# Sprout
 
-Build a Next.js (App Router, JavaScript — NOT TypeScript, use .jsx/.js files only, no .tsx, no type annotations) frontend-only UI mockup for a developer tool called "Sprout" — an AI coding assistant that shows a visual map of a codebase and explains code in plain English. This is UI/UX only — no real backend logic, use mock/placeholder data and props everywhere so functionality can be wired in later. Structure all components modularly in clearly named folders (components/landing, components/dashboard, components/filemap, components/editor, components/agents) so each piece can be imported independently later.
+**AI-powered code companion that maps your codebase, explains every file, and runs a token-efficient multi-agent pipeline to generate and ship code — straight to GitHub.**
 
-DESIGN SYSTEM (this is the most important part — follow it precisely, do not default to generic SaaS/shadcn styling):
+Built for a hackathon. Built to solve a real problem: most AI coding agents burn 10–13× more tokens than needed by re-reading code they've already seen. Sprout fixes that from the ground up.
 
-Color palette:
+---
 
-- Light mode background: warm off-white/beige (#F7F3EC or similar), with a very subtle paper grain texture overlay
+## What it does
 
-- Dark mode: ONLY the background changes, to a warm dark charcoal (#1C1B1A), NOT pure black. All accent colors stay identical and saturated in both modes.
+### 1. Visual File Map
+Load any public GitHub repo (or private with OAuth). Sprout fetches the full recursive file tree, classifies every file by domain (UI / API / Database / Security / Validation / Review) using fast rule-based heuristics, and renders an interactive D3 graph.
 
-- Accent colors used throughout for buttons, tags, highlights: coral/terracotta orange (#E8795A), mint/teal (#7DD3C0), soft cyan (#8FD8E8), and a muted pink (#F0A8C0). Use these as accents on cards, buttons, status indicators — not as backgrounds.
+- Hover any node → on-demand AI summary (~120 tokens, lazy — not upfront)
+- Click any node → deeper detail: role, pointers to related files, workflow breakdown
+- Ask the map a natural-language question ("where is authentication handled?") → instant answer with target file
+- Export the full map as Markdown or JSON to paste into any AI tool
 
-- Text: near-black ink (#2A2620) in light mode, warm off-white in dark mode.
+Summaries are cached in `sessionStorage` per repo so they survive page reloads and are never re-fetched.
 
-Typography:
+### 2. Code Explainer
+Paste or load any file. Sprout splits it into logical blocks, then explains any selected block in plain English — no full-file re-read on every question.
 
-- Large headlines: a bold, elegant serif font (like Fraunces or Playfair Display), sometimes with an italic treatment for emphasis
+### 3. Multi-Agent Orchestrator
+Describe what you want to build. A **deterministic planner** (no routing LLM) computes the exact pipeline and executes it:
 
-- Body/UI text: a clean, slightly rounded sans-serif (like General Sans or Inter)
+| Phase | What happens |
+|---|---|
+| `repo_read` | Reads the target GitHub repo tree + optional file samples |
+| `map` | Loads a compact repo map snapshot (~800 tokens, not the full tree) |
+| `db` *(if goal mentions database)* | DB agent designs schema + seed data + `db.js` data layer |
+| `ui` | UI agent generates React component files from the goal + map context |
+| Monitor gate | Auto-reviews every generated artifact — quality check, 64-token reply |
+| Security gate | Auto-reviews for secrets, eval(), server-only imports, XSS |
+| Self-heal | If monitor fails, retries the same agent with feedback injected — no human loop |
+| `push` | Creates blobs, builds a tree commit, pushes to GitHub via Trees API |
 
-- Small tags, code, and status labels: a monospace font for a technical feel
+Every step streams back to the browser over SSE. Generated files render live in a Sandpack in-browser sandbox before anything hits GitHub.
 
-Borders and shapes — this is critical for the "not vibe-coded" look:
+### 4. Run History
+Every completed run is saved to `localStorage` per repo. The last 3 runs are injected as compact context on the next run so the agent knows what was already built.
 
-- Do NOT use plain 1px rounded-rectangle borders everywhere. Use thick (2-3px) hand-drawn-feeling borders with slightly organic, imperfect rounded corners on cards, buttons, and panels — like a sketched outline rather than a CSS default.
+---
 
-- Pill-shaped buttons with a small arrow icon, similar to a friendly editorial website
+## Why the token efficiency matters
 
-- Decorative small stamp/seal/badge illustration elements in corners of sections (simple circular badge shapes)
+| Operation | Typical agent | Sprout |
+|---|---|---|
+| Routing decision per turn | ~3,500 tokens | **0** — deterministic planner |
+| Repo context per run | ~40,000 tokens | **~800** — compact snapshot |
+| Code review pass | ~3,500 tokens | **~300** — 2 files × 1.5k chars |
+| Node summary (hover) | ~2,000 tokens | **~120** — path + siblings only |
+| **Total per run** | **~57,000 tokens** | **~1,620 tokens** |
 
-- A few sections should have a subtle vintage paper/grain texture, not flat color
+At GPT-4-class pricing and 100 runs/day, that's roughly **$9,000/month saved** per team.
 
-Illustration and mascot:
+---
 
-- Include a friendly character avatar (simple flat illustration, circular, like a small persona) in the bottom-right corner as a "chat with your assistant" widget — a rounded card with the character, a name, and a "Let's start" pill button, with a subtle floating/breathing animation (scale 1 to 1.02 loop)
+## Tech stack
 
-- Use simple line-art decorative illustrations (a subtle abstract tree/network doodle in the hero background, low opacity) rather than stock icons
+| Layer | Choice |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Language | JavaScript / JSX |
+| Styling | Tailwind CSS v4 + custom CSS design system |
+| Animation | Framer Motion (`motion/react`) |
+| Graph | D3 v7 |
+| Live preview | Sandpack (`@codesandbox/sandpack-react`) |
+| AI / LLM | [Groq](https://console.groq.com) — multi-model routing by role |
+| Auth | GitHub OAuth → iron-session (encrypted cookie) |
 
-Animations (use Framer Motion):
+### Model routing
 
-- Buttons: scale up slightly + shadow lift on hover, spring transition
+| Role | Env var | Default |
+|---|---|---|
+| Orchestrator + UI generation | `GROQ_MODEL_UI` | `openai/gpt-oss-120b` |
+| Review / security gates | `GROQ_MODEL_REVIEW` | `openai/gpt-oss-20b` |
+| File map summaries | `GROQ_MODEL_FILEMAP` | `openai/gpt-oss-20b` |
 
-- Cards: fade + slide up on scroll into view, staggered
+---
 
-- Page/section transitions: smooth fade
+## Project structure
 
-- Dark mode toggle: smooth color transition, not instant, styled as a small pill switch with a sun/moon icon that slides
+```
+app/
+  page.js                    # Landing page
+  workspace/
+    WorkspaceClient.js       # Client shell — repo loading, orchestrator SSE, history
+  api/
+    auth/                    # GitHub OAuth (login, callback, logout, session)
+    github/tree              # Server-side proxy for GitHub recursive tree API
+    github/content           # Proxies individual file content
+    filemap/summarize        # AI summary for a single file node (on hover)
+    filemap/explain          # Deeper node detail (role, pointers, workflow)
+    filemap/ask              # Natural-language Q&A over the repo map
+    explain-code             # Full-file structured code explanation
+    explain-block            # Selected-block plain-English explanation
+    chunk-code               # Splits a file into logical blocks
+    orchestrator             # SSE endpoint — streams the multi-agent pipeline
+    agents/ui                # Direct UI-agent endpoint (used by live preview standalone)
 
-PAGES/VIEWS TO BUILD:
+src/
+  components/
+    landing/                 # Hero, NavBar, stats strip, how-it-works, token math, FAQ, footer
+    dashboard/               # DashboardShell, tab routing
+    filemap/                 # FileSystemMap, FileMapGraph (D3), RepoInput, ask/copy bars
+    editor/                  # CodeExplainer panel
+    agents/                  # AgentSidebar, AgentCardRow, OrchestratorStatus, ReviewResultsPanel
+    history/                 # HistorySidebar (run history per repo)
+    preview/                 # LivePreviewPanel (Sandpack + orchestrator integration)
+    shared/                  # ActionButton, SproutMark logo, ThemeToggle
+  context/
+    RepoMapContext.jsx       # Shared repo-map state across workspace
+  hooks/
+    useRepoMapSummarize      # Lazy AI summarisation on node hover/click
+    useRepoDependencies      # Parses import graph from file content
+    useRunHistory            # localStorage run history per repo key
+    useSession               # GitHub auth session
+  lib/
+    repoMap.js               # Build, persist, merge AI results into the map
+    parseGithubTree.js       # Flatten GitHub tree API response
+    parseDependencies.js     # Static import/require graph parser
+    fileTypeGuess.js         # Rule-based fallback labels before AI runs
+    repoMapAsk.js            # Prompt builder for ask-about-repo flow
+    repoMapExport.js         # Copy-to-clipboard export (Markdown / JSON)
+    auth.js                  # iron-session helpers
+    orchestrator/
+      loop.js                # Main pipeline runner — iterates phases, fires gates
+      planner.js             # Deterministic plan builder (zero LLM calls)
+      tools.js               # Tool registry wired to agent implementations
+      context.js             # Mutable run context + compactMapSnapshot()
+      groq.js                # Groq client — multi-model routing, rate-limit retry
+      validate.js            # Tool result shape assertion
+      agents/
+        uiAgent.js           # Generates React files from goal + repo map context
+        dbAgent.js           # Designs database schemas + data layer
+        reviewAgent.js       # Monitor (quality) + Security review gates
+        githubAgent.js       # Reads/creates repos, pushes commits via Trees API
+        stubs.js             # No-op stubs for map-load phase
+```
 
-1. Landing page: Nav bar with logo mark + links + a "Get Started" pill button. Large serif hero headline with subheadline, a primary CTA pill button, decorative background illustration, and the corner mascot chat widget. Below the fold, a 3-column feature section (Visual File Map / Plain-English Code Explanations / Smart Token-Saving Review) each as a hand-bordered card with an icon and short copy.
+---
 
-2. Dashboard shell: A left sidebar showing 6 "agent" avatars/icons in a vertical list (UI, Database, API, Review, Security, Validation) each as a small rounded card with a name, a colored status dot (idle/active pulse animation), and hover tooltip. Main content area is a flexible panel for the views below.
+## Getting started
 
-3. File System Map view: A visual tree/node map of a mock file structure (5-6 example files/folders) rendered as connected rounded boxes (use a simple custom layout, not a plain list). On hovering a file node, show an animated tooltip/popup card (styled like a flip-card, hand-bordered) with a one-line plain-English description of what that file does.
-
-4. Code viewer/explainer view: A mock code editor panel (monospace font, line numbers, syntax-highlighted-looking placeholder text) where selecting a block of text triggers a side panel or popup card that says "Here's what this does" with a plain-English mock explanation, styled with the same hand-drawn border and a small animated appearance (slide in from the right).
-
-5. Settings/dark mode: A toggle in the nav bar switching the whole app between light and dark background per the rules above, animated smoothly.
-
-Make sure every component takes props for its content (agent names, file names, descriptions, code text) rather than hardcoding text inline, so I can pass real data in later. Keep the whole build as ONE cohesive response — do not ask clarifying questions, make reasonable design decisions and build the complete set of pages and components now.
-
-This project was built with [Lovable](https://lovable.dev).
-
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/06d57d25-529f-41cb-9514-c95407ad10b8).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
-## Development
-
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+Requires Node.js ≥ 18.
 
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
+git clone https://github.com/angelcodesbomb/sprout-code-companion
+cd sprout-code-companion
+npm install
+cp .env.example .env.local   # fill in GROQ_API_KEY at minimum
 npm run dev
 ```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `GROQ_API_KEY` | ✅ | [Get a free key at console.groq.com](https://console.groq.com) |
+| `GROQ_MODEL_UI` | optional | Model for UI generation (default: `openai/gpt-oss-120b`) |
+| `GROQ_MODEL_REVIEW` | optional | Model for review gates (default: `openai/gpt-oss-20b`) |
+| `GROQ_MODEL_FILEMAP` | optional | Model for file map summaries (default: `openai/gpt-oss-20b`) |
+| `GITHUB_CLIENT_ID` | for auth | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | for auth | GitHub OAuth App client secret |
+| `AUTH_SECRET` | for auth | 32-byte base64 secret for cookie encryption |
+| `GITHUB_TOKEN` | optional | Server-side PAT for higher GitHub API rate limits |
+
+**GitHub OAuth App** (only needed for private repos / pushing):
+1. [Create an OAuth App](https://github.com/settings/developers)
+2. Homepage URL: `http://localhost:3000`
+3. Callback URL: `http://localhost:3000/api/auth/callback`
+
+### Other commands
+
+```sh
+npm run build                   # Production build
+npm run lint                    # ESLint
+npm run test:orchestrator       # Smoke-test the orchestrator pipeline
+npm run test:groq-tools         # Smoke-test Groq tool-calling
+```
+
+---
+
+## How the orchestrator pipeline works
+
+```
+POST /api/orchestrator  { goal, mapSnapshot?, stream: true }
+        │
+        ▼
+  buildPlan(goal, ctx)          ← pure function, zero LLM calls
+        │
+  for each phase:
+  ┌─────────────────────────────────────────────────────┐
+  │  tool_start  ──SSE──►  browser                      │
+  │  tool.run(input)                                     │
+  │  step  ──SSE──►  browser                            │
+  │                                                      │
+  │  if codegen step succeeded:                          │
+  │    monitorGate  → self-heal if quality fails (1×)    │
+  │    securityGate → log flags, continue                │
+  │    ui_files  ──SSE──►  browser  → Sandpack preview  │
+  └─────────────────────────────────────────────────────┘
+        │
+  done  ──SSE──►  browser
+```
+
+The key design choice: routing is a **pure function** (`planner.js`), not an LLM call. The previous approach asked a model "what should I do next?" on every turn (~3,500 tokens each). The current planner uses regex + boolean checks and costs zero tokens.
+
+---
+
+## Architecture decisions worth noting
+
+**File map first, content never** — agents receive a compact snapshot of the repo map (40 sample paths + domain counts), not file content. The UI agent never reads actual source files — it infers stack and structure from paths alone.
+
+**Review as middleware, not a pipeline step** — the Monitor and Security gates run as synchronous middleware after every codegen step, not as orchestrator turns. They don't consume a routing slot and can't be skipped by the planner.
+
+**Sandpack path flattening** — generated files are normalized to a flat root (`/Button.jsx`, `/db.js`) and imports are rewritten automatically so Sandpack resolves them without a bundler config.
+
+**Single CSS file** — the entire design system lives in `src/styles.css`. No Tailwind utility classes in component files for custom UI — only the design token layer (`bg-card`, `text-foreground` etc.) is used where Tailwind makes sense.
