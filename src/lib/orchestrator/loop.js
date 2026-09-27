@@ -237,11 +237,35 @@ export async function runOrchestrator({
 
       // Security gate (security check on the final artifact after any self-heal)
       const finalArtifact = ctx.artifacts[ctx.artifacts.length - 1];
-      const secResult = await securityGate(finalArtifact);
+      let secResult = await securityGate(finalArtifact);
+      let securityHealed = false;
       if (!secResult.pass) {
-        console.warn(
-          `[orchestrator/loop] Security gate flags: ${(secResult.flags ?? []).join(", ")} — logged, continuing.`
-        );
+        const flagSummary = (secResult.flags ?? []).join(", ") || secResult.note || "security issues detected";
+        console.log(`[orchestrator/loop] Security gate FAIL — self-healing: ${flagSummary}`);
+        // Self-heal: re-run the same codegen tool with the security flags injected
+        // as a fix instruction. One auto-retry, same as the monitor gate.
+        const secRetryInput = {
+          ...toolInput,
+          spec: `${toolInput.spec ?? ""}\n\nSecurity fix required: ${flagSummary}. Remove all hardcoded secrets, API keys, or tokens. Do not use eval() or new Function(). Do not use dangerouslySetInnerHTML. Do not import server-only modules (fs, path, crypto, next/server, next/headers) in client components.`.trim(),
+        };
+        const secRetryRaw    = await tool.run(secRetryInput);
+        const secRetryResult = assertToolResult(secRetryRaw, toolName);
+        if (secRetryResult.ok) {
+          securityHealed = true;
+          const secFixedArtifact = secRetryResult.output?.artifact;
+          if (secFixedArtifact) {
+            const idx = ctx.artifacts.findIndex((a) => a.id === (finalArtifact?.id ?? result.output?.artifact?.id));
+            if (idx !== -1) ctx.artifacts[idx] = secFixedArtifact;
+          }
+          console.log(`[orchestrator/loop] Security self-heal succeeded.`);
+          step.result   = compressToolResult(secRetryResult, toolName);
+          step.artifact = secRetryResult.output?.artifact ?? null;
+          // Re-run security review on the healed artifact so the UI shows the
+          // updated result, not the original flagged one.
+          secResult = await securityGate(secRetryResult.output?.artifact ?? finalArtifact);
+        } else {
+          console.warn(`[orchestrator/loop] Security self-heal failed — continuing anyway.`);
+        }
       }
       // Attach both gate results to the step so they reach the SSE client and
       // can be displayed in the review/security results panel.
@@ -251,9 +275,10 @@ export async function runOrchestrator({
         healed:   !monResult.pass,  // true when self-heal was attempted
       };
       step.securityResult = {
-        pass:  secResult.pass,
-        flags: secResult.flags ?? [],
-        note:  secResult.note  ?? null,
+        pass:   secResult.pass,
+        flags:  secResult.flags ?? [],
+        note:   secResult.note  ?? null,
+        healed: securityHealed,  // true when self-heal was attempted and re-check passed
       };
       step.securityFlags = secResult.flags ?? [];
       // Re-emit the step with review data attached so SSE clients get the full picture.

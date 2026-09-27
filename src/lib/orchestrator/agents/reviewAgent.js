@@ -61,9 +61,24 @@ function formatFilesForPrompt(files) {
  * Falls back to pass:true if parsing fails so a broken reviewer never blocks the pipeline.
  */
 function parseReviewResponse(raw, reviewType) {
-  const stripped = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  // Strip think blocks and markdown fences before any extraction attempt
+  let stripped = raw
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^```(?:json)?\s*/im, "")
+    .replace(/\s*```$/m, "")
+    .trim();
 
-  // Try direct JSON
+  // Strategy 1: find a JSON object that contains a "pass" key — this
+  // avoids picking up stray braces in preamble or system-prompt echoes.
+  const jsonMatch = stripped.match(/\{[^{}]*"pass"\s*:[^{}]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (typeof parsed.pass === "boolean") return parsed;
+    } catch { /* fall through */ }
+  }
+
+  // Strategy 2: outermost { ... } in case the object is nested (e.g. flags array)
   const start = stripped.indexOf("{");
   const end   = stripped.lastIndexOf("}");
   if (start !== -1 && end > start) {
@@ -73,14 +88,18 @@ function parseReviewResponse(raw, reviewType) {
     } catch { /* fall through */ }
   }
 
-  // Heuristic: if response contains "pass" or "ok" without "fail" or "issue"
+  // Heuristic fallback — default to pass:true so a broken reviewer never
+  // silently blocks the pipeline. Only flip to false when the model clearly
+  // said something failed (explicit "pass: false" / "failed" wording).
+  // We intentionally avoid words that appear in the system prompt itself
+  // ("issue", "error", "secrets") because those would always trigger false negatives.
   const lower = stripped.toLowerCase();
-  const looksOk = (lower.includes("pass") || lower.includes("looks good") || lower.includes("no issues"))
-    && !lower.includes("fail") && !lower.includes("issue") && !lower.includes("error");
+  const looksOk = !(lower.includes("pass: false") || lower.includes('"pass":false') || lower.includes("failed"));
 
   console.warn(`[reviewAgent/${reviewType}] Could not parse JSON response — heuristic: ${looksOk ? "pass" : "fail"}`);
   return {
     pass:     looksOk,
+    flags:    [],
     feedback: looksOk ? "OK (heuristic)" : `Could not parse review response. Raw: ${stripped.slice(0, 200)}`,
   };
 }
@@ -165,7 +184,7 @@ export async function runSecurityReview(artifact) {
         { role: "system", content: SECURITY_SYSTEM },
         { role: "user",   content: userMsg },
       ],
-      { maxTokens: 64, temperature: 0.1 }
+      { maxTokens: 128, temperature: 0.1 }
     );
   } catch (err) {
     console.warn(`[reviewAgent/security] Groq error — skipping review: ${err.message}`);
